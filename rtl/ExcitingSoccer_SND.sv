@@ -8,7 +8,7 @@
 
 module ExcitingSoccer_SND
 (
-    input                clk,            // 49.152 MHz
+    input                clk,            // 60.000 MHz
     input                reset,
     input                pause,
 
@@ -28,12 +28,12 @@ module ExcitingSoccer_SND
 
     ////////////////////////////////////////////////////////////////////////
     // Clock enables.
-    //   Z80  14.318181/4 = 3.579545 MHz -> 3579545.25/49152000 * 2^24 = 1221797
+    //   Z80  14.318181/4 = 3.579545 MHz -> 3579545.25/60000000 * 2^24 = 1000913
     //   AY   14.318181/8 = 1.789773 MHz -> derived as cen_z80/2, which is
     ////////////////////////////////////////////////////////////////////////
 
-    localparam [24:0] INC_Z80 = 25'd1221797;   // -> 3579545.6 Hz  (err 0.4 Hz)
-    localparam [24:0] INC_AY1 = 25'd662263;    // -> 1940003   Hz  (err 3   Hz)
+    localparam [24:0] INC_Z80 = 25'd1000913;   // -> 3579543.8 Hz  (err 1.5 Hz)
+    localparam [24:0] INC_AY1 = 25'd542525;    // -> 1940220.6 Hz
 
     reg [24:0] acc_z80 = 25'd0;
     reg [24:0] acc_ay1 = 25'd0;

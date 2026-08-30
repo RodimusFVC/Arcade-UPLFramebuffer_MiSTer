@@ -7,13 +7,13 @@
 //
 //  mcu_start / bus_dir  <- LS259 mainlatch Q6/Q7 (champbas.cpp:935-936)
 //  ext_*                <- champbas_map 0x6000-0x63FF shared RAM
-//  mcu_addr / mcu_data  -> champbas_rom's 13-bit MCU ROM port
+//  mcu_addr / mcu_data  -> upl_rom's 13-bit MCU ROM port
 //  CEN_DIV generates the machine-cycle enable; pause freezes it in phase.
 //
 //============================================================================
 
 module alpha8201 #(
-    parameter [15:0] CEN_DIV = 16'd511   // clk cycles per machine-cycle tick, minus 1
+    parameter [15:0] CEN_DIV = 16'd624   // clk cycles per machine-cycle tick, minus 1
 ) (
     input  wire        clk,
     input  wire        reset,

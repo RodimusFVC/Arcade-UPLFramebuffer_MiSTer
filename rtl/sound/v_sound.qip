@@ -1,16 +1,9 @@
 # UPL Framebuffer sound: 2 x YM2203, via jt03 (JT12 by Jose Tejada / jotego).
 #
 # This list is the computed dependency closure of jt03.v - do not hand-edit.
-# jt49 is the SSG embedded in the YM2203; jt12_top instantiates it with
-# IOA_oe/IOB_oe and YM2203_LUMPED, which the 248-line jt49 inherited from the
-# donor core does not have.
-#
-# TODO - jt49 provenance is temporary. jt12 declares jt49 as a git submodule
-# (rtl/sound/jt12/.gitmodules -> jotego/jt49) but the directory is empty, so the
-# files under rtl/sound/jt49/hdl/ were copied from NeoGeo_MiSTer/rtl/jt49/hdl/.
-# To restore submodule provenance: populate rtl/sound/jt12/jt49/, then repoint
-# the six jt49 lines at the bottom of this file to rtl/sound/jt12/jt49/hdl/ and
-# delete rtl/sound/jt49/hdl/. No other file references jt49.
+# jt49 is the SSG embedded in the YM2203, supplied by the git submodule at
+# rtl/sound/jt49 (jotego/jt49). jt12_top instantiates it with IOA_oe/IOB_oe and
+# YM2203_LUMPED, so that submodule must stay checked out.
 #
 # jt49_bus.v is deliberately absent: jt12_top instantiates plain jt49, and the
 # champbas AY that used the _bus wrapper is gone.

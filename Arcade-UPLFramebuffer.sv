@@ -1,6 +1,6 @@
 //============================================================================
 //
-// ChampionBaseball for MiSTer
+// UPLFramebuffer for MiSTer
 // Copyright (C) 2026 Rodimus
 // Based on Tutankham core structure
 //
@@ -33,7 +33,7 @@ assign ADC_BUS  = 'Z;
 assign USER_OUT = '1;
 assign {UART_RTS, UART_TXD, UART_DTR} = 0;
 assign {SD_SCK, SD_MOSI, SD_CS} = 'Z;
-assign {SDRAM_DQ, SDRAM_A, SDRAM_BA, SDRAM_CLK, SDRAM_CKE, SDRAM_DQML, SDRAM_DQMH, SDRAM_nWE, SDRAM_nCAS, SDRAM_nRAS, SDRAM_nCS} = 'Z;
+// SDRAM pins are driven by the controller inside upl_rom - tie-off removed.
 
 assign VGA_F1 = 0;
 assign VGA_SCALER = 0;
@@ -58,7 +58,7 @@ assign BUTTONS = 0;
 
 wire [1:0] ar = status[14:13];
 
-// set_id: MRA index 5, captured inside champbas_rom and exposed by the game top.
+// set_id: MRA index 5, captured inside upl_rom and exposed by the game top.
 //   0x00-0x06 champbas family (ROT0)   0x07 talbot   0x08-0x0A exctsccr family   (both ROT270)
 wire [7:0] set_id;
 wire is_vertical = (set_id >= 8'h07);
@@ -71,7 +71,7 @@ assign VIDEO_ARY = horz ? ((!ar) ? 12'd3 : 12'd0) : ((!ar) ? 12'd4 : 12'd0);
 
 `include "build_id.v"
 localparam CONF_STR = {
-	"CHAMPIONBASEBALL;;",
+	"UPLFRAMEBUFFER;;",
 	"P1,Video Options;",
 	"P1ODE,Aspect Ratio,Original,Full screen,[ARC1],[ARC2];",
 	"P1OC,Orientation,Vert,Horz;",
@@ -85,6 +85,10 @@ localparam CONF_STR = {
 	"-;",
 	"P3,High Score Options;",
 	"P3OR,Autosave Hiscores,Off,On;",
+	"-;",
+	"-;",
+	"OJK,SDRAM Rd Latch,Early,Normal,Late;",
+	"OO,Tile ROM Viewer,Off,On;",
 	"-;",
 	"DIP;",
 	"-;",
@@ -107,6 +111,7 @@ wire        ioctl_wr;
 wire [24:0] ioctl_addr;
 wire  [7:0] ioctl_dout;
 wire  [7:0] ioctl_din;
+wire        ioctl_wait;
 
 wire [15:0] joystick_0, joystick_1;
 wire [15:0] joy = joystick_0 | joystick_1;
@@ -116,7 +121,7 @@ wire        direct_video;
 
 hps_io #(.CONF_STR(CONF_STR)) hps_io
 (
-	.clk_sys(CLK_49M),
+	.clk_sys(CLK_60M),
 	.HPS_BUS(HPS_BUS),
 	.EXT_BUS(),
 	.gamma_bus(gamma_bus),
@@ -136,6 +141,7 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 	.ioctl_addr(ioctl_addr),
 	.ioctl_dout(ioctl_dout),
 	.ioctl_din(ioctl_din),
+	.ioctl_wait(ioctl_wait),
 	.ioctl_index(ioctl_index),
 
 	.joystick_0(joystick_0),
@@ -144,22 +150,32 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 );
 
 ////////////////////   CLOCKS   ///////////////////
-//     49.152 / 16 = 3.072 MHz = XTAL 18.432 / 6  -> both Z80s
-//     49.152 /  8 = 6.144 MHz = XTAL 18.432 / 3  -> pixel clock
-wire CLK_49M;
+//   Fabric 60.000 MHz = 50 MHz refclk x 12/10 (integer PLL: M=12, N=1, C=10).
+//     60 / 10 = 6.0 MHz = XTAL 12 / 2 -> main Z80 + pixel clock
+//     60 / 12 = 5.0 MHz = 5 MHz XTAL  -> sound Z80
+//     60 / 40 = 1.5 MHz = XTAL 12 / 8 -> both YM2203
+wire CLK_60M;
 wire locked;
 
 pll pll
 (
     .refclk(CLK_50M),
     .rst(0),
-    .outclk_0(CLK_49M),
+    .outclk_0(CLK_60M),
     .locked(locked)
 );
 
-assign CLK_VIDEO = CLK_49M;
+assign CLK_VIDEO = CLK_60M;
 
 wire reset = RESET | status[0] | buttons[1] | ioctl_download;
+
+// SDRAM power-on reset. Deliberately excludes ioctl_download (and everything
+// else): a reset that includes it holds the load FSM idle for the whole
+// transfer and not one byte lands. High ~15 cycles after config, then low
+// forever. See the vault's decocass_darksoft_dongle_2026-06-10 note.
+reg  [3:0] por_cnt = 4'd0;
+wire       por_reset = ~&por_cnt;
+always @(posedge CLK_60M) if (por_reset) por_cnt <= por_cnt + 1'b1;
 
 ///////////////////         Keyboard           //////////////////
 
@@ -178,7 +194,7 @@ reg btn_service  = 0;
 
 wire pressed = ~ps2_key[9];
 wire [7:0] code = ps2_key[7:0];
-always @(posedge CLK_49M) begin
+always @(posedge CLK_60M) begin
 	reg old_state;
 	old_state <= ps2_key[10];
 	if(old_state != ps2_key[10]) begin
@@ -250,10 +266,12 @@ wire m_right1_c = ctrl_flip_ud ? m_left1  : m_right1;
 wire m_left2_c  = ctrl_flip_ud ? m_right2 : m_left2;
 wire m_right2_c = ctrl_flip_ud ? m_left2  : m_right2;
 
-// MAME port assembly. All champbas inputs are IP_ACTIVE_LOW, so these invert.
-wire [7:0] p1_port     = ~{m_down1_c, m_right1_c, m_left1_c, m_up1_c, m_steal1, m_change1, 1'b0, m_throw1};
-wire [7:0] p2_port     = ~{m_down2_c, m_right2_c, m_left2_c, m_up2_c, m_steal2, m_change2, 1'b0, m_throw2};
-wire [7:0] system_port = ~{4'b0000, m_coin2, m_coin1, m_start2, m_start1};
+// MAME port assembly (ninjakd2.cpp:1156). All UPL inputs are IP_ACTIVE_LOW.
+//   KEYCOIN: 0 START1  1 START2  4 SERVICE  6 COIN1  7 COIN2
+//   PAD:     0 RIGHT   1 LEFT    2 DOWN     3 UP     4 BUTTON1  5 BUTTON2
+wire [7:0] keycoin_port = ~{m_coin2, m_coin1, 1'b0, m_service, 1'b0, 1'b0, m_start2, m_start1};
+wire [7:0] pad1_port    = ~{2'b00, m_steal1, m_throw1, m_up1_c, m_down1_c, m_left1_c, m_right1_c};
+wire [7:0] pad2_port    = ~{2'b00, m_steal2, m_throw2, m_up2_c, m_down2_c, m_left2_c, m_right2_c};
 
 // HISCORE DISABLED 2026-08-24 -- restore corrupts loaded data, cause not found.
 // Module tied off here AND index-3 commented out in every MRA. To re-enable:
@@ -261,7 +279,7 @@ wire [7:0] system_port = ~{4'b0000, m_coin2, m_coin1, m_start2, m_start1};
 // and un-comment index 3 in the MRAs.
 wire [15:0] hs_address      = 16'd0;
 wire  [7:0] hs_data_in      = 8'd0;
-wire  [7:0] hs_data_out;                  // driven by the game module, harmless
+wire  [7:0] hs_data_out     = 8'd0;       // hiscore disabled; nothing drives this
 wire        hs_write_enable = 1'b0;
 wire        hs_access_read  = 1'b0;
 wire        hs_access_write = 1'b0;
@@ -273,10 +291,10 @@ assign      ioctl_upload_req = 1'b0;
 // PAUSE SYSTEM
 wire pause_cpu;
 wire [23:0] rgb_out;
-pause #(8,8,8,10) pause
+pause #(8,8,8,60) pause
 (
 	.*,
-	.clk_sys(CLK_49M),
+	.clk_sys(CLK_60M),
 	.user_button(m_pause),
 	.pause_request(hs_pause),
 	.options(~status[26:25])
@@ -302,7 +320,7 @@ arcade_video #(256,24) arcade_video
 (
 	.*,
 
-	.clk_video(CLK_49M),
+	.clk_video(CLK_60M),
 
 	.RGB_in(rgb_out),
 	.HBlank(hblank),
@@ -315,23 +333,23 @@ arcade_video #(256,24) arcade_video
 
 // DIP switch
 reg [7:0] dip_sw[8] = '{8'h00,8'h00,8'h00,8'h00,8'h00,8'h00,8'h00,8'h00};
-always @(posedge CLK_49M) begin
+always @(posedge CLK_60M) begin
 	if (ioctl_wr && (ioctl_index == 8'd254) && !ioctl_addr[24:3])
 		dip_sw[ioctl_addr[2:0]] <= ioctl_dout;
 end
 wire [7:0] sw0 = dip_sw[0];
 
-ChampionBaseball championbaseball_inst
+UPLFramebuffer uplframebuffer_inst
 (
-	// in permanent reset: h_cnt/v_cnt never left 0, HSync/VSync were stuck low, no sync at all.
-	.reset(reset),        // MiSTer reset is active-high; champbas modules are active-high too
+	.reset(reset),
+	.por_reset(por_reset),
+	.clk_60m(CLK_60M),
 
-	.clk_49m(CLK_49M),
-
-	.p1(p1_port),
-	.p2(p2_port),
-	.dsw(sw0),
-	.system(system_port),
+	.keycoin(keycoin_port),
+	.pad1(pad1_port),
+	.pad2(pad2_port),
+	.dsw1(dip_sw[0]),
+	.dsw2(dip_sw[1]),
 
 	.set_id(set_id),
 
@@ -353,17 +371,20 @@ ChampionBaseball championbaseball_inst
 	.ioctl_wr(ioctl_wr),
 	.ioctl_index(ioctl_index),
 	.ioctl_download(ioctl_download),
-
-	.hs_addr(hs_address),
-	.hs_din(hs_data_in),
-	.hs_dout(hs_data_out),
-	.hs_we(hs_write_enable),
-	.hs_active(hs_access_read | hs_access_write),
+	.ioctl_wait(ioctl_wait),
 
 	.crt_flip(status[22]),          // CRT Flip
 
-	.pause(pause_cpu)
+	.pause(pause_cpu),
+
+	.rd_mode(status[20:19]),       // DIAG-REVERT-2026-08-30: 0=Early is the fix
+	.diag_tileview(status[24]),    // DIAG-REVERT-2026-08-30
+
+	.SDRAM_DQ(SDRAM_DQ), .SDRAM_A(SDRAM_A), .SDRAM_DQML(SDRAM_DQML), .SDRAM_DQMH(SDRAM_DQMH),
+	.SDRAM_BA(SDRAM_BA), .SDRAM_nCS(SDRAM_nCS), .SDRAM_nWE(SDRAM_nWE), .SDRAM_nRAS(SDRAM_nRAS),
+	.SDRAM_nCAS(SDRAM_nCAS), .SDRAM_CKE(SDRAM_CKE), .SDRAM_CLK(SDRAM_CLK)
 );
+
 
 // hiscore #(
 // 	.HS_ADDRESSWIDTH(16),
@@ -371,7 +392,7 @@ ChampionBaseball championbaseball_inst
 // 	.CFG_LENGTHWIDTH(2)
 // ) hi (
 // 	.*,
-// 	.clk(CLK_49M),
+// 	.clk(CLK_60M),
 // 	.paused(pause_cpu),
 // 	.autosave(status[27]),
 // 	.ram_address(hs_address),

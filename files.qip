@@ -1,11 +1,10 @@
 set_global_assignment -name VHDL_INPUT_VERSION VHDL_2008
 
-set_global_assignment -name SYSTEMVERILOG_FILE Arcade-ChampionBaseball.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/ChampionBaseball.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/ChampionBaseball_SND.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/ExcitingSoccer_SND.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/ChampionBaseball_VIDEO.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/ChampionBaseball_MAIN.sv
+set_global_assignment -name SYSTEMVERILOG_FILE Arcade-UPLFramebuffer.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/UPLFramebuffer.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/UPLFramebuffer_SND.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/UPLFramebuffer_VIDEO.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/UPLFramebuffer_MAIN.sv
 
 set_global_assignment -name QIP_FILE rtl/cpu/T80/T80.qip
 set_global_assignment -name QIP_FILE rtl/sound/v_sound.qip
@@ -15,14 +14,12 @@ set_global_assignment -name VERILOG_FILE rtl/nvram.v
 set_global_assignment -name VERILOG_FILE rtl/hiscore.v
 
 
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/cpu/hmcs40/hmcs40_decoder.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/cpu/hmcs40/hmcs40.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/cpu/hmcs40/alpha8201.sv
 
 set_global_assignment -name VHDL_FILE rtl/ram_rom/dpram_dc.vhd
 set_global_assignment -name VHDL_FILE rtl/ram_rom/spram.vhd
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ram_rom/rom_loader.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/ram_rom/champbas_rom.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ram_rom/sdram.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ram_rom/upl_rom.sv
 
 set_global_assignment -name VERILOG_FILE rtl/pll.v
 set_global_assignment -name VERILOG_FILE rtl/pll/pll_0002.v
