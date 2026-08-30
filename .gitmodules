@@ -1,3 +1,6 @@
 [submodule "rtl/sound/jt12"]
 	path = rtl/sound/jt12
 	url = https://github.com/jotego/jt12.git
+[submodule "rtl/sound/jt49"]
+	path = rtl/sound/jt49
+	url = https://github.com/jotego/jt49.git
