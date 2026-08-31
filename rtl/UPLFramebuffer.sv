@@ -96,6 +96,8 @@ wire [14:0] char_addr;      wire char_req, char_ack;   wire [7:0] char_data;
 wire [18:0] tile1_addr;     wire tile1_req, tile1_ack; wire [7:0] tile1_data;
 wire [17:0] spr_addr;       wire spr_req, spr_ack;     wire [7:0] spr_data;
 wire [15:0] fb_raddr;       wire [7:0] fb_rdata;       wire spr_draw_window;
+wire [15:0] pcm_addr;       wire pcm_req, pcm_ack;     wire [7:0] pcm_data;
+wire  [7:0] pcm_cmd;        wire pcm_cmd_wr;
 
 upl_rom rom
 (
@@ -120,7 +122,7 @@ upl_rom rom
     .tile1_addr(tile1_addr), .tile1_req(tile1_req), .tile1_ack(tile1_ack), .tile1_data(tile1_data),
     .tile2_addr(19'd0), .tile2_req(1'b0), .tile2_ack(), .tile2_data(),
     .tile3_addr(19'd0), .tile3_req(1'b0), .tile3_ack(), .tile3_data(),
-    .pcm_addr(16'd0),   .pcm_req(1'b0),   .pcm_ack(),   .pcm_data(),
+    .pcm_addr(pcm_addr), .pcm_req(pcm_req), .pcm_ack(pcm_ack), .pcm_data(pcm_data),
 
     .SDRAM_DQ(SDRAM_DQ), .SDRAM_A(SDRAM_A), .SDRAM_DQML(SDRAM_DQML), .SDRAM_DQMH(SDRAM_DQMH),
     .SDRAM_BA(SDRAM_BA), .SDRAM_nCS(SDRAM_nCS), .SDRAM_nWE(SDRAM_nWE), .SDRAM_nRAS(SDRAM_nRAS),
@@ -237,15 +239,37 @@ UPLFramebuffer_SND snd_board
     .rom_addr(audiocpu_addr),
     .rom_data(audiocpu_data),
     .rom_m1(audiocpu_m1),
-    .pcm_cmd(),                 // ninjakd2 sample player, wired with the PCM engine
-    .pcm_cmd_wr(),
+    .pcm_cmd(pcm_cmd),
+    .pcm_cmd_wr(pcm_cmd_wr),
 
     .sound_out(snd_mono),
     .diag_tone(diag_tone), .diag_ym(diag_ym)   // DIAG-REVERT-2026-08-31
 );
 
 // Mono board - one SPEAKER (ninjakd2.cpp:1575)
-assign sound_l = snd_mono;
-assign sound_r = snd_mono;
+wire signed [15:0] pcm_snd;
+
+UPLFramebuffer_PCM pcm_player
+(
+    .clk(clk_60m),
+    .reset(reset),
+    .pause(pause),
+    .cmd(pcm_cmd),
+    .cmd_wr(pcm_cmd_wr),
+    .rom_addr(pcm_addr),
+    .rom_req(pcm_req),
+    .rom_ack(pcm_ack),
+    .rom_data(pcm_data),
+    .sample_out(pcm_snd)
+);
+
+// Sum and saturate. The YM mix keeps its existing level (HW-approved), so the
+// PCM adds on top and only clips where the two peak together.
+wire signed [16:0] snd_mix = {snd_mono[15], snd_mono} + {pcm_snd[15], pcm_snd};
+wire signed [15:0] snd_sat = (snd_mix >  17'sd32767) ?  16'sd32767 :
+                             (snd_mix < -17'sd32768) ? -16'sd32768 : snd_mix[15:0];
+
+assign sound_l = snd_sat;
+assign sound_r = snd_sat;
 
 endmodule
