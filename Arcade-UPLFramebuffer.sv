@@ -59,11 +59,11 @@ assign BUTTONS = 0;
 wire [1:0] ar = status[14:13];
 
 // set_id: MRA index 5, captured inside upl_rom and exposed by the game top.
-//   0x00-0x06 champbas family (ROT0)   0x07 talbot   0x08-0x0A exctsccr family   (both ROT270)
+//   0x00-0x0C ninjakd2 / mnight / arkarea / robokid (ROT0)   0x0D-0x0F omegaf (ROT270)
 wire [7:0] set_id;
-wire is_vertical = (set_id >= 8'h07);
+wire is_vertical = (set_id >= 8'h0D);
 
-// got squashed into a 3:4 portrait window. Aspect must follow the SAME set_id split as the
+// Aspect keys off the same split as screen_rotate, so the two can never disagree.
 wire horz = ~is_vertical | status[12];
 
 assign VIDEO_ARX = horz ? ((!ar) ? 12'd4 : (ar - 1'd1)) : ((!ar) ? 12'd3 : (ar - 1'd1));
@@ -95,8 +95,8 @@ localparam CONF_STR = {
 	"DIP;",
 	"-;",
 	"R0,Reset;",
-	"J1,Throw,Steal,Changes,Coin,Start 1P,Start 2P,Pause;",
-	"jn,A,B,X,Select,Start,R,L;",
+	"J1,Attack,Jump,Coin,Start 1P,Start 2P,Pause;",
+	"jn,A,B,Select,Start,R,L;",
 	"V,v",`BUILD_DATE
 };
 
@@ -116,7 +116,6 @@ wire  [7:0] ioctl_din;
 wire        ioctl_wait;
 
 wire [15:0] joystick_0, joystick_1;
-wire [15:0] joy = joystick_0 | joystick_1;
 
 wire [21:0] gamma_bus;
 wire        direct_video;
@@ -185,8 +184,8 @@ reg btn_up       = 0;
 reg btn_down     = 0;
 reg btn_left     = 0;
 reg btn_right    = 0;
-reg btn_fire     = 0;
-reg btn_fire2    = 0;
+reg btn_attack   = 0;
+reg btn_jump     = 0;
 reg btn_coin1    = 0;
 reg btn_coin2    = 0;
 reg btn_1p_start = 0;
@@ -212,8 +211,8 @@ always @(posedge CLK_60M) begin
 			'h72: btn_down     <= pressed; // down       = Down
 			'h6B: btn_left     <= pressed; // left       = Left
 			'h74: btn_right    <= pressed; // right      = Right
-			'h14: btn_fire     <= pressed; // ctrl       = Draw Slow
-			'h12: btn_fire2    <= pressed; // left shift = Draw Fast
+			'h14: btn_attack   <= pressed; // ctrl       = Attack
+			'h12: btn_jump     <= pressed; // left shift = Jump
 		endcase 
 	end
 end
@@ -222,39 +221,35 @@ end
 
 //////////////////  Arcade Buttons/Interfaces   ///////////////////////////
 
-// champbas has THREE buttons (INPUT_PORTS champbas, champbas.cpp:761-771):
+// Every UPL set here is 2-button (ninjakd2.cpp INPUT_PORTS common / common_2p).
 
 //Player 1
 wire m_up1      = btn_up        | joystick_0[3];
 wire m_down1    = btn_down      | joystick_0[2];
 wire m_left1    = btn_left      | joystick_0[1];
 wire m_right1   = btn_right     | joystick_0[0];
-wire m_throw1   = btn_fire      | joystick_0[4];
-wire m_steal1   = btn_fire2     | joystick_0[5];
-wire m_change1  =                 joystick_0[6];
+wire m_attack1  = btn_attack    | joystick_0[4];
+wire m_jump1    = btn_jump      | joystick_0[5];
 
 //Player 2 (cocktail)
 wire m_up2      = btn_up        | joystick_1[3];
 wire m_down2    = btn_down      | joystick_1[2];
 wire m_left2    = btn_left      | joystick_1[1];
 wire m_right2   = btn_right     | joystick_1[0];
-wire m_throw2   = btn_fire      | joystick_1[4];
-wire m_steal2   = btn_fire2     | joystick_1[5];
-wire m_change2  =                 joystick_1[6];
+wire m_attack2  = btn_attack    | joystick_1[4];
+wire m_jump2    = btn_jump      | joystick_1[5];
 
 //Start/Coin
-wire m_coin1    = btn_coin1     | joystick_0[7];
-wire m_coin2    = btn_coin2     | joystick_1[7];
-wire m_start1   = btn_1p_start  | joystick_0[8];
-wire m_start2   = btn_2p_start  | joystick_0[9];
-wire m_pause    = btn_pause     | joystick_0[10];
+wire m_coin1    = btn_coin1     | joystick_0[6];
+wire m_coin2    = btn_coin2     | joystick_1[6];
+wire m_start1   = btn_1p_start  | joystick_0[7];
+wire m_start2   = btn_2p_start  | joystick_0[8];
+wire m_pause    = btn_pause     | joystick_0[9];
 
 //Service Mode
 wire m_service  = btn_service                  ;
 
-// User reports Exciting Soccer's up/down inverted. Exciting Soccer boots
-// flip_screen=1 (maincpu.dasm $010C writes $00 to $A003) where champbas boots
-// affected. Left/right are deliberately NOT swapped — the report was
+// Hook for a 180 deg control transform if a set ever needs it; unused on UPL.
 wire ctrl_flip_ud = 1'b0;
 
 wire m_up1_c   = ctrl_flip_ud ? m_down1 : m_up1;
@@ -262,7 +257,6 @@ wire m_down1_c = ctrl_flip_ud ? m_up1   : m_down1;
 wire m_up2_c   = ctrl_flip_ud ? m_down2 : m_up2;
 wire m_down2_c = ctrl_flip_ud ? m_up2   : m_down2;
 
-// reversed, which completes the picture — flip_screen=1 is a 180 deg transform,
 wire m_left1_c  = ctrl_flip_ud ? m_right1 : m_left1;
 wire m_right1_c = ctrl_flip_ud ? m_left1  : m_right1;
 wire m_left2_c  = ctrl_flip_ud ? m_right2 : m_left2;
@@ -272,8 +266,8 @@ wire m_right2_c = ctrl_flip_ud ? m_left2  : m_right2;
 //   KEYCOIN: 0 START1  1 START2  4 SERVICE  6 COIN1  7 COIN2
 //   PAD:     0 RIGHT   1 LEFT    2 DOWN     3 UP     4 BUTTON1  5 BUTTON2
 wire [7:0] keycoin_port = ~{m_coin2, m_coin1, 1'b0, m_service, 1'b0, 1'b0, m_start2, m_start1};
-wire [7:0] pad1_port    = ~{2'b00, m_steal1, m_throw1, m_up1_c, m_down1_c, m_left1_c, m_right1_c};
-wire [7:0] pad2_port    = ~{2'b00, m_steal2, m_throw2, m_up2_c, m_down2_c, m_left2_c, m_right2_c};
+wire [7:0] pad1_port    = ~{2'b00, m_jump1, m_attack1, m_up1_c, m_down1_c, m_left1_c, m_right1_c};
+wire [7:0] pad2_port    = ~{2'b00, m_jump2, m_attack2, m_up2_c, m_down2_c, m_left2_c, m_right2_c};
 
 // HISCORE DISABLED 2026-08-24 -- restore corrupts loaded data, cause not found.
 // Module tied off here AND index-3 commented out in every MRA. To re-enable:
@@ -309,10 +303,7 @@ wire hs, vs;
 wire [7:0] r, g, b;
 wire ce_pix;
 
-// documented revert path ("arcade_video back to #(256,24) and drop .ce_pix below"). It existed to
-
-// ROTATION: champbas is ROT0 (horizontal). Talbot and the whole Exciting Soccer family are ROT270.
-//   0x00-0x06 champbas family (ROT0)   0x07 talbot   0x08-0x0A exctsccr family (both ROT270)
+// Only omegaf (set_id 0x0D-0x0F) is ROT270; every other UPL set here is ROT0.
 wire rotate_ccw  = 1'b1;                                    // ROT270 = counter-clockwise
 wire no_rotate   = ~is_vertical | status[12] | direct_video;
 wire flip        = status[11];

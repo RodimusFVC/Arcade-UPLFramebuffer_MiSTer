@@ -17,7 +17,7 @@
     <players>2 (alternating)</players>
     <joystick>8-way</joystick>
     <num_buttons>2</num_buttons>
-    <buttons names="Attack,Jump,Not Used,Not Used,Coin,Start 1P,Start 2P,Pause" default="A,B,Y,X,Select,Start,R,L"/>
+    <buttons names="Attack,Jump,Coin,Start 1P,Start 2P,Pause" default="A,B,Select,Start,R,L"/>
 
     <switches default="EF,FF">
         <dip bits="0,1" name="Coinage" ids="3 Coins/1 Credit,2 Coins/1 Credit,1 Coin/2 Credits,1 Coin/1 Credit"/>
