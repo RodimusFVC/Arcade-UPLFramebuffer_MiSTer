@@ -62,22 +62,40 @@ module UPLFramebuffer_MAIN
     // same in both and each block stays zero-based at the same bit slice, so
     // only the chip selects differ. Sprite RAM sits at work+0x1A00 either way.
     //-------------------------------------------------------------------------
-    wire is_mnight = (set_id >= 8'h06) && (set_id <= 8'h08);   // mnight/mnightj/arkarea
+    wire is_mnight  = (set_id >= 8'h06) && (set_id <= 8'h08);  // mnight/mnightj/arkarea
+    wire is_robokid = (set_id >= 8'h09) && (set_id <= 8'h0C);  // robokid + 3 japan sets
 
     wire cs_rom   = (A[15] == 1'b0);                       // 0000-7FFF fixed
     wire cs_bank  = (A[15:14] == 2'b10);                   // 8000-BFFF banked
-    wire cs_in    = is_mnight ? ((A[15:8] == 8'hF8) && (A[7:0] < 8'd5))    // F800-F804
-                              : ((A[15:8] == 8'hC0) && (A[7:0] < 8'd5));   // C000-C004
-    wire cs_ctrl  = is_mnight ? (A[15:8] == 8'hFA)                         // FA00-FA0C
-                              : (A[15:8] == 8'hC2);                        // C200-C20C
-    wire cs_pal   = is_mnight ? ((A >= 16'hF000) && (A < 16'hF600))        // F000-F5FF
-                              : ((A >= 16'hC800) && (A < 16'hCE00));       // C800-CDFF
-    wire cs_fg    = is_mnight ? (A[15:11] == 5'b11101)                     // E800-EFFF
-                              : (A[15:11] == 5'b11010);                    // D000-D7FF
-    wire cs_bg    = is_mnight ? (A[15:11] == 5'b11100)                     // E000-E7FF
-                              : (A[15:11] == 5'b11011);                    // D800-DFFF
-    wire cs_work  = is_mnight ? (A[15:13] == 3'b110)                       // C000-DFFF
-                              : (A[15:13] == 3'b111);                      // E000-FFFF
+
+    // robokid reads inputs and writes control at the SAME addresses (DC00-DC04);
+    // cs_in only feeds the read mux and cs_ctrl only gates writes, so both assert.
+    wire cs_in    = is_robokid ? ((A[15:8] == 8'hDC) && (A[7:0] < 8'd5))   // DC00-DC04
+                  : is_mnight  ? ((A[15:8] == 8'hF8) && (A[7:0] < 8'd5))   // F800-F804
+                               : ((A[15:8] == 8'hC0) && (A[7:0] < 8'd5));  // C000-C004
+    wire cs_ctrl  = is_robokid ? (A[15:8] == 8'hDC)                        // DC00-DC03
+                  : is_mnight  ? (A[15:8] == 8'hFA)                        // FA00-FA0C
+                               : (A[15:8] == 8'hC2);                       // C200-C20C
+    wire cs_pal   = is_robokid ? ((A >= 16'hC000) && (A < 16'hC800))       // C000-C7FF
+                  : is_mnight  ? ((A >= 16'hF000) && (A < 16'hF600))       // F000-F5FF
+                               : ((A >= 16'hC800) && (A < 16'hCE00));      // C800-CDFF
+    wire cs_fg    = is_robokid ? (A[15:11] == 5'b11001)                    // C800-CFFF
+                  : is_mnight  ? (A[15:11] == 5'b11101)                    // E800-EFFF
+                               : (A[15:11] == 5'b11010);                   // D000-D7FF
+    wire cs_bg    = is_robokid ? 1'b0                                      // banked, see cs_bgb
+                  : is_mnight  ? (A[15:11] == 5'b11100)                    // E000-E7FF
+                               : (A[15:11] == 5'b11011);                   // D800-DFFF
+    wire cs_work  = is_mnight  ? (A[15:13] == 3'b110)                      // C000-DFFF
+                               : (A[15:13] == 3'b111);                     // E000-FFFF (also robokid)
+
+    // robokid's three banked bg VRAM windows, D000-D3FF / D400-D7FF / D800-DBFF.
+    // Storage only -- nothing renders these yet, but the CPU must read back what it
+    // wrote or the boot test fails. 0x800 per layer, one bank bit (video_init_banked(0x800)).
+    wire cs_bgb   = is_robokid && (A[15:12] == 4'hD) && (A[11:10] != 2'b11);
+
+    // robokid bg control: DD00-DD05 layer0, DE00-DE05 layer1, DF00-DF05 layer2.
+    // Only the +05 bank register is implemented; scroll/enable are ignored for now.
+    wire cs_bgctl = is_robokid && (A[15:10] == 6'b110111) && (A[9:8] != 2'b00);
 
     assign maincpu_addr = A;
 
@@ -96,6 +114,7 @@ module UPLFramebuffer_MAIN
     reg        bgen        = 1'b1;
     reg  [7:0] latch_reg   = 8'd0;
     reg        latch_wr    = 1'b0;
+    reg  [2:0] bgbank      = 3'd0;   // robokid: one bank bit per bg layer
 
     // robokid/omegaf have a 0x50000 main ROM region (16 banks); the ninjakd2,
     // mnight and arkarea boards have 0x30000 (8 banks). MAME derives the mask
@@ -108,7 +127,13 @@ module UPLFramebuffer_MAIN
         latch_wr <= 1'b0;
         if (reset) begin
             bank_reg <= 4'd0; flip_reg <= 1'b0; sndrst_reg <= 1'b0;
-            overdraw <= 1'b0; bgen <= 1'b1;
+            overdraw <= 1'b0; bgen <= 1'b1; bgbank <= 3'd0;
+        end else if (cen_cpu && mem_wr && cs_bgctl && (A[7:0] == 8'h05)) begin
+            case (A[9:8])                            // DD05/DE05/DF05 -> layer 0/1/2
+                2'd1: bgbank[0] <= cpu_dout[0];
+                2'd2: bgbank[1] <= cpu_dout[0];
+                default: bgbank[2] <= cpu_dout[0];
+            endcase
         end else if (ctrl_wr) begin
             case (A[7:0])
                 8'h00: begin latch_reg <= cpu_dout; latch_wr <= 1'b1; end
@@ -173,6 +198,21 @@ module UPLFramebuffer_MAIN
         .clock_b(clk), .address_b(bg_vram_addr), .data_b(8'd0), .wren_b(1'b0), .q_b(bg_vram_data)
     );
 
+    // D000->layer2, D400->layer1, D800->layer0 (window order is reversed vs the
+    // DD/DE/DF control order), so pick the bank register accordingly.
+    wire [1:0]  bgb_win  = A[11:10];
+    wire        bgb_sel  = (bgb_win == 2'd0) ? bgbank[2]
+                         : (bgb_win == 2'd1) ? bgbank[1] : bgbank[0];
+    wire [12:0] bgb_addr = {bgb_win, bgb_sel, A[9:0]};
+    wire  [7:0] bgb_q_a;
+
+    dpram_dc #(.widthad_a(13), .width_a(8)) bgbank_ram
+    (
+        .clock_a(clk), .address_a(bgb_addr), .data_a(cpu_dout),
+        .wren_a(cen_cpu & mem_wr & cs_bgb), .q_a(bgb_q_a),
+        .clock_b(clk), .address_b(13'd0), .data_b(8'd0), .wren_b(1'b0), .q_b()
+    );
+
     dpram_dc #(.widthad_a(13), .width_a(8)) work_ram
     (
         .clock_a(clk), .address_a(A[12:0]), .data_a(cpu_dout),
@@ -210,6 +250,7 @@ module UPLFramebuffer_MAIN
         else if (cs_pal)   cpu_din = A[0] ? pal_q_a[7:0] : pal_q_a[15:8];
         else if (cs_fg)    cpu_din = fg_q_a;
         else if (cs_bg)    cpu_din = bg_q_a;
+        else if (cs_bgb)   cpu_din = bgb_q_a;
         else if (cs_work)  cpu_din = work_q_a;
         else               cpu_din = 8'hFF;
     end

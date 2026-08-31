@@ -37,8 +37,8 @@
 
     <!-- Index 0: Main CPU. 0x0000-0x7FFF fixed, then the 0x4000 banks from region 0x10000 -->
     <rom index="0" md5="none" zip="robokid.zip|robokidj2.zip">
+        <part name="1_rom29.18j" crc="969fb951" length="0x8000"/>
         <part name="1_rom29.18j" crc="969fb951"/>
-        <part repeat="0x10000">00</part>
         <part name="2_rom30.18k" crc="c0228b63"/>
         <part name="robokid3.15k" crc="05295ec3"/>
         <part name="robokid4.12k" crc="3bc3977f"/>
