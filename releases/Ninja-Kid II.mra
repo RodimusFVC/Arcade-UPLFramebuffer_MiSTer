@@ -17,7 +17,7 @@
     <players>2 (alternating)</players>
     <joystick>8-way</joystick>
     <num_buttons>2</num_buttons>
-    <buttons names="Attack,Jump,Not Used,Not Used,Coin,Start 1P,Start 2P,Pause" default="A,B,Y,X,Select,Start,R,L"/>
+    <buttons names="Attack,Jump,Unused,Unused,Coin,Start 1P,Start 2P,Pause" default="A,B,X,Y,Select,Start,R,L"/>
 
     <switches default="6F,FD">
         <dip bits="0" name="Flip Screen" ids="On,Off"/>

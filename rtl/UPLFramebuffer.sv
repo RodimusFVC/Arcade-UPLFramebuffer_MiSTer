@@ -48,6 +48,8 @@ module UPLFramebuffer
     // DIAG-REVERT-2026-08-30
     input          [1:0] rd_mode,        // SDRAM read latch: 0=Early 1=Normal 2=Late
     input                diag_tileview,
+    input          [1:0] diag_bgmode,    // 0 Off 1 Swatch 2 TileROM 3 VRAMCol
+    input                diag_sproff,    // 1 = drop the sprite layer out of the mix
 
     // ---- SDRAM
     inout  [15:0] SDRAM_DQ,
@@ -89,6 +91,9 @@ assign ce_pix = cen_pix;
 wire [15:0] maincpu_addr;   wire [3:0] maincpu_bank;   wire [7:0] maincpu_data;
 wire [15:0] audiocpu_addr;  wire audiocpu_m1;          wire [7:0] audiocpu_data;
 wire [14:0] char_addr;      wire char_req, char_ack;   wire [7:0] char_data;
+wire [18:0] tile1_addr;     wire tile1_req, tile1_ack; wire [7:0] tile1_data;
+wire [17:0] spr_addr;       wire spr_req, spr_ack;     wire [7:0] spr_data;
+wire [15:0] fb_raddr;       wire [7:0] fb_rdata;       wire spr_draw_window;
 
 upl_rom rom
 (
@@ -109,8 +114,8 @@ upl_rom rom
     .audiocpu_addr(audiocpu_addr), .audiocpu_m1(audiocpu_m1), .audiocpu_data(audiocpu_data),
 
     .char_addr(char_addr),  .char_req(char_req),  .char_ack(char_ack),  .char_data(char_data),
-    .spr_addr(18'd0),   .spr_req(1'b0),   .spr_ack(),   .spr_data(),
-    .tile1_addr(19'd0), .tile1_req(1'b0), .tile1_ack(), .tile1_data(),
+    .spr_addr(spr_addr), .spr_req(spr_req), .spr_ack(spr_ack), .spr_data(spr_data),
+    .tile1_addr(tile1_addr), .tile1_req(tile1_req), .tile1_ack(tile1_ack), .tile1_data(tile1_data),
     .tile2_addr(19'd0), .tile2_req(1'b0), .tile2_ack(), .tile2_data(),
     .tile3_addr(19'd0), .tile3_req(1'b0), .tile3_ack(), .tile3_data(),
     .pcm_addr(16'd0),   .pcm_req(1'b0),   .pcm_ack(),   .pcm_data(),
@@ -161,9 +166,7 @@ UPLFramebuffer_MAIN main_board
     .vblank(video_vblank)
 );
 
-// not driven until the background tilemap and sprite framebuffer are built
-assign bg_vram_addr = 11'd0;
-assign work_addr    = 13'd0;
+
 
 //------------------------------------------------------- Video ---------------------------------------------------------------//
 
@@ -175,14 +178,39 @@ UPLFramebuffer_VIDEO video
 
     .flip_screen(flip_screen),
     .DIAG_TILEVIEW(diag_tileview),   // DIAG-REVERT-2026-08-30
+    .DIAG_BGMODE(diag_bgmode),       // DIAG-REVERT-2026-08-30
+    .DIAG_SPROFF(diag_sproff),       // DIAG-REVERT-2026-08-30
 
     .fg_vram_addr(fg_vram_addr), .fg_vram_data(fg_vram_data),
+    .bg_vram_addr(bg_vram_addr), .bg_vram_data(bg_vram_data),
+    .bg_scrollx(bg_scrollx), .bg_scrolly(bg_scrolly), .bg_enable(bg_enable),
     .char_addr(char_addr), .char_req(char_req), .char_ack(char_ack), .char_data(char_data),
+    .tile1_addr(tile1_addr), .tile1_req(tile1_req), .tile1_ack(tile1_ack), .tile1_data(tile1_data),
+    .fb_raddr(fb_raddr), .fb_rdata(fb_rdata), .spr_draw_window(spr_draw_window),
     .pal_index(pal_index), .pal_rgb(pal_rgb),
 
     .HSync(video_hsync), .VSync(video_vsync),
     .HBlank(video_hblank), .VBlank(video_vblank),
-    .R(video_r), .G(video_g), .B(video_b)
+    .R(video_r), .G(video_g), .B(video_b),
+    .DIAG_bst(), .DIAG_btidx(), .DIAG_bty(), .DIAG_bstart()   // DIAG-REVERT-2026-08-30
+);
+
+//------------------------------------------------------- Sprites -------------------------------------------------------------//
+
+UPLFramebuffer_SPRITE sprites
+(
+    .clk(clk_60m),
+    .reset(reset),
+
+    .flip_screen(flip_screen),
+    .overdraw(sprite_overdraw),
+    .draw_window(spr_draw_window),
+
+    .spr_ram_addr(work_addr), .spr_ram_data(work_data),
+    .spr_addr(spr_addr), .spr_req(spr_req), .spr_ack(spr_ack), .spr_data(spr_data),
+
+    .fb_raddr(fb_raddr), .fb_rdata(fb_rdata),
+    .busy()
 );
 
 //------------------------------------------------------- Sound board ---------------------------------------------------------//
