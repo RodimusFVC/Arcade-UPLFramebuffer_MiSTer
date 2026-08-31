@@ -57,23 +57,35 @@ module UPLFramebuffer_MAIN
     wire int_ack = ~m1_n & ~iorq_n;
 
     //-------------------------------------------------------------------------
-    // Address decode (ninjakd2.cpp:1010)
+    // Address decode. ninjakd2 (ninjakd2.cpp:1026) and mnight (:1047) relocate
+    // every region, but the control-register and input low-byte offsets are the
+    // same in both and each block stays zero-based at the same bit slice, so
+    // only the chip selects differ. Sprite RAM sits at work+0x1A00 either way.
     //-------------------------------------------------------------------------
+    wire is_mnight = (set_id >= 8'h06) && (set_id <= 8'h08);   // mnight/mnightj/arkarea
+
     wire cs_rom   = (A[15] == 1'b0);                       // 0000-7FFF fixed
     wire cs_bank  = (A[15:14] == 2'b10);                   // 8000-BFFF banked
-    wire cs_in    = (A[15:8] == 8'hC0) && (A[7:0] < 8'd5); // C000-C004 inputs
-    wire cs_ctrl  = (A[15:8] == 8'hC2);                    // C200-C20C control
-    wire cs_pal   = (A >= 16'hC800) && (A < 16'hCE00);     // C800-CDFF palette
-    wire cs_fg    = (A[15:11] == 5'b11010);                // D000-D7FF fg
-    wire cs_bg    = (A[15:11] == 5'b11011);                // D800-DFFF bg
-    wire cs_work  = (A[15:13] == 3'b111);                  // E000-FFFF work + sprite RAM
+    wire cs_in    = is_mnight ? ((A[15:8] == 8'hF8) && (A[7:0] < 8'd5))    // F800-F804
+                              : ((A[15:8] == 8'hC0) && (A[7:0] < 8'd5));   // C000-C004
+    wire cs_ctrl  = is_mnight ? (A[15:8] == 8'hFA)                         // FA00-FA0C
+                              : (A[15:8] == 8'hC2);                        // C200-C20C
+    wire cs_pal   = is_mnight ? ((A >= 16'hF000) && (A < 16'hF600))        // F000-F5FF
+                              : ((A >= 16'hC800) && (A < 16'hCE00));       // C800-CDFF
+    wire cs_fg    = is_mnight ? (A[15:11] == 5'b11101)                     // E800-EFFF
+                              : (A[15:11] == 5'b11010);                    // D000-D7FF
+    wire cs_bg    = is_mnight ? (A[15:11] == 5'b11100)                     // E000-E7FF
+                              : (A[15:11] == 5'b11011);                    // D800-DFFF
+    wire cs_work  = is_mnight ? (A[15:13] == 3'b110)                       // C000-DFFF
+                              : (A[15:13] == 3'b111);                      // E000-FFFF
 
     assign maincpu_addr = A;
 
     //-------------------------------------------------------------------------
     // Control registers.
-    //   C200 soundlatch   C201 bit4 sound reset / bit7 flip screen
-    //   C202 bank select  C203 bit0 sprite overdraw   C208-C20C bg scroll+enable
+    //   +00 soundlatch    +01 bit4 sound reset / bit7 flip screen
+    //   +02 bank select   +03 bit0 sprite overdraw   +08..+0C bg scroll+enable
+    //   base C200 on ninjakd2, FA00 on mnight/arkarea - offsets are identical.
     //-------------------------------------------------------------------------
     reg  [3:0] bank_reg    = 4'd0;
     reg        flip_reg    = 1'b0;

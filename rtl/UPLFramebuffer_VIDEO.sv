@@ -15,6 +15,7 @@ module UPLFramebuffer_VIDEO
     input               reset,
 
     input               flip_screen,
+    input               bg_mnight,       // mnight/arkarea bg tile decode (11-bit index)
 
     // DIAG-REVERT-2026-08-30: 1 = ignore fg_videoram and the palette, draw char
     // tiles 0.. in order as greyscale. The screen becomes the gfx ROM itself.
@@ -283,16 +284,19 @@ module UPLFramebuffer_VIDEO
     assign tile1_addr   = tile1_addr_r;
     assign tile1_req    = tile1_req_r;
 
+    // mnight/arkarea reuse hi bit4 as tile bit 10 instead of flipx
+    // (ninjakd2.cpp mnight_get_bg_tile_info); ninjakd2 keeps a 10-bit index.
     // DIAG-REVERT-2026-08-30: original -> wire [9:0] bg_tile = {bhi[7:6], blo};
-    wire [9:0] bg_tile  = (DIAG_BGMODE == 2'd2) ? bfetch_tidx : {bhi[7:6], blo};
-    wire       bg_flipy = bhi[5];
+    wire [10:0] bg_tile  = (DIAG_BGMODE == 2'd2) ? {1'b0, bfetch_tidx}
+                                                 : {bg_mnight & bhi[4], bhi[7:6], blo};
+    wire        bg_flipy = bhi[5];
     wire [3:0] bg_ty    = bg_flipy ? ~bfetch_my : bfetch_my;
 
     // gfx_8x8x4_row_2x2_group_packed_msb: 128 bytes per 16x16 tile, four 8x8
     // sub-tiles in 0 1 / 2 3 order, so the byte offset is a pure concatenation:
     //   ty[3]*64 + tx[3]*32 + ty[2:0]*4 + tx[2:1]
     // Fetch index j is tx[3:1], so j ascending walks tx 0..15 left to right.
-    wire [18:0] bg_rom_addr = {2'b00, bg_tile, bg_ty[3], bj[2], bg_ty[2:0], bj[1:0]};
+    wire [18:0] bg_rom_addr = {1'b0, bg_tile, bg_ty[3], bj[2], bg_ty[2:0], bj[1:0]};
 
     always_ff @(posedge clk) begin
         if (reset || !fetch_en) begin
@@ -323,7 +327,8 @@ module UPLFramebuffer_VIDEO
                     4'd4: begin
                         bhi          <= bg_vram_data;
                         bg_new_color <= bg_vram_data[3:0];
-                        bg_new_flipx <= bg_vram_data[4];
+                        // mnight/arkarea use bit4 as tile bit 10, so they have no flipx
+                        bg_new_flipx <= bg_mnight ? 1'b0 : bg_vram_data[4];
                         bst          <= 4'd5;
                     end
                     4'd5: begin tile1_addr_r <= bg_rom_addr; tile1_req_r <= 1'b1; bst <= 4'd6; end

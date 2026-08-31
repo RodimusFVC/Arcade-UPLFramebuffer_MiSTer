@@ -122,9 +122,11 @@ module UPLFramebuffer_SPRITE
     // big sprites: code &= ~3 then xor in the quadrant.
     // ninjakd2 is not robokid_sprites, so big_xshift=0 and big_yshift=1.
     reg  [1:0] qx, qy;       // quadrant being drawn (0..big)
-    wire [9:0] base_code = e_big ? {e_code[9:2], 2'b00} ^ {8'd0, f_flipy, f_flipx}
-                                 :  e_code[9:0];
-    wire [9:0] cur_code  = base_code ^ {8'd0, qy[0], qx[0]};
+    // 11-bit code: ninjakd2's sprite ROM is 0x20000 (1024 tiles, bit10 unused) but
+    // mnight/arkarea are 0x30000 = 1536 tiles and need it.
+    wire [10:0] base_code = e_big ? {e_code[10:2], 2'b00} ^ {9'd0, f_flipy, f_flipx}
+                                  :  e_code;
+    wire [10:0] cur_code  = base_code ^ {9'd0, qy[0], qx[0]};
 
     wire signed [9:0] cur_x0 = f_sx + (qx[0] ? 10'sd16 : 10'sd0);
     wire signed [9:0] cur_y0 = f_sy + (qy[0] ? 10'sd16 : 10'sd0);
@@ -147,7 +149,7 @@ module UPLFramebuffer_SPRITE
     assign spr_req  = spr_req_r;
 
     // 1024 tiles x 128 bytes = 0x20000, so the region address is 17 bits
-    wire [17:0] rom_addr = {1'b0, cur_code, ty[3], rj[2], ty[2:0], rj[1:0]};
+    wire [17:0] rom_addr = {cur_code, ty[3], rj[2], ty[2:0], rj[1:0]};
 
     wire [5:0] pshift = {2'd0, ~tx} << 2;
     wire [3:0] pen    = (rowbits >> pshift) & 64'hF;

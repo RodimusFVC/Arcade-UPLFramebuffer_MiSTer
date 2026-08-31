@@ -50,6 +50,8 @@ module UPLFramebuffer
     input                diag_tileview,
     input          [1:0] diag_bgmode,    // 0 Off 1 Swatch 2 TileROM 3 VRAMCol
     input                diag_sproff,    // 1 = drop the sprite layer out of the mix
+    input                diag_tone,      // DIAG-REVERT-2026-08-31: square wave at the mixer
+    input                diag_ym,        // DIAG-REVERT-2026-08-31: SSG tone into YM2203 #1
 
     // ---- SDRAM
     inout  [15:0] SDRAM_DQ,
@@ -170,6 +172,9 @@ UPLFramebuffer_MAIN main_board
 
 //------------------------------------------------------- Video ---------------------------------------------------------------//
 
+// mnight/mnightj/arkarea use an 11-bit bg tile index (ninjakd2.cpp:1047 family).
+wire bg_mnight = (set_id >= 8'h06) && (set_id <= 8'h08);
+
 UPLFramebuffer_VIDEO video
 (
     .clk(clk_60m),
@@ -177,6 +182,7 @@ UPLFramebuffer_VIDEO video
     .reset(reset),
 
     .flip_screen(flip_screen),
+    .bg_mnight(bg_mnight),
     .DIAG_TILEVIEW(diag_tileview),   // DIAG-REVERT-2026-08-30
     .DIAG_BGMODE(diag_bgmode),       // DIAG-REVERT-2026-08-30
     .DIAG_SPROFF(diag_sproff),       // DIAG-REVERT-2026-08-30
@@ -234,7 +240,8 @@ UPLFramebuffer_SND snd_board
     .pcm_cmd(),                 // ninjakd2 sample player, wired with the PCM engine
     .pcm_cmd_wr(),
 
-    .sound_out(snd_mono)
+    .sound_out(snd_mono),
+    .diag_tone(diag_tone), .diag_ym(diag_ym)   // DIAG-REVERT-2026-08-31
 );
 
 // Mono board - one SPEAKER (ninjakd2.cpp:1575)

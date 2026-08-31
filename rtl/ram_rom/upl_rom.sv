@@ -165,8 +165,11 @@ module upl_rom
     (
         .clock_a(clk), .address_a(audiocpu_addr[14:0]),
         .data_a(8'd0), .wren_a(1'b0), .q_a(sc_op_q),
+        // Opcodes occupy only 0x10000-0x17FFF. The region is 0x20000 and the MRA
+        // fills all of it, so bit 15 must gate the write or 0x18000+ aliases back
+        // onto 0x0000 and overwrites the opcodes with the data half.
         .clock_b(clk), .address_b(sc_off[14:0]),
-        .data_b(ioctl_data), .wren_b(sc_wr && sc_is_op), .q_b()
+        .data_b(ioctl_data), .wren_b(sc_wr && sc_is_op && !sc_off[15]), .q_b()
     );
 
     assign audiocpu_data = (use_opcodes && audiocpu_m1 && !audiocpu_addr[15])
