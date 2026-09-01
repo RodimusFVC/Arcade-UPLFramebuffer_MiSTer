@@ -7,7 +7,7 @@
     <series>Ark Area</series>
     <category>Shooter</category>
     <bootleg>no</bootleg>
-    <mameversion>0270</mameversion>
+    <mameversion>0289</mameversion>
     <rbf>UPLFramebuffer</rbf>
 
     <resolution>15kHz</resolution>
@@ -37,7 +37,7 @@
         <dip bits="15" name="Unused" ids="On,Off"/>
     </switches>
 
-    <!-- Index 0: Main CPU. 0x0000-0x7FFF fixed, then the 0x4000 banks from region 0x10000 -->
+    <!-- Index 0: Main CPU. 0x8000 fixed, then banks -->
     <rom index="0" md5="none" zip="arkarea.zip">
         <part name="arkarea.008" crc="1ce1b5b9"/>
         <part name="arkarea.009" crc="db1c81d1"/>
@@ -46,7 +46,7 @@
         <part name="arkarea.012" crc="3c4c65d5"/>
     </rom>
 
-    <!-- Index 1: Sound CPU (0x0000-0x17FFF; 0x10000+ is the MC8123 decrypted-opcode half) -->
+    <!-- Index 1: Sound CPU -->
     <rom index="1" md5="none" zip="arkarea.zip">
         <part name="arkarea.013" crc="2d409d58"/>
         <part repeat="0x8000">00</part>
@@ -72,7 +72,6 @@
     </rom>
 
     <!-- Index 5: game-select byte -->
-    <!--   00 ninjakd2  01 ninjakd2a  02 ninjakd2b  03 ninjakd2c  04 rdaction  05 jt104  06 mnight  07 mnightj  08 arkarea  09 robokid  0A robokidj  0B robokidj2  0C robokidj3  0D omegaf  0E omegafa  0F omegafs -->
     <rom index="5"><part>08</part></rom>
 
     <remark>Ark Area</remark>

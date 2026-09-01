@@ -1,12 +1,12 @@
 <p align="center">
-  <img src="Useful Information/Champion Baseball.png" width="800">
-  <img src="Useful Information/Champion Baseball Part-2.png" width="800">
-  <img src="Useful Information/Exciting Soccer.png" width="800">
-  <img src="Useful Information/Exciting Soccer II.png" width="800">
-  <img src="Useful Information/Talbot.png" width="800">
+  <img src="Useful Information/NinjaKidII.png" width="800">
+  <img src="Useful Information/OmegaFighter.png" width="800">
+  <img src="Useful Information/ArkArea.png" width="800">
+  <img src="Useful Information/AtomicRoboKid.png" width="800">
+  <img src="Useful Information/MutantNight.png" width="800">
 </p>
 
-<h1 align="center">Champion Baseball FPGA Core</h1>
+<h1 align="center">UPL Framebuffer FPGA Core</h1>
 
 <p align="center">
   Arcade hardware implementation for MiSTer FPGA
@@ -16,7 +16,7 @@
 
 ## Overview
 
-FPGA implementation of **Champion Baseball (1983)**, originally developed and released by Sega/Alpha Denshi.
+FPGA implementation of **UPL's sprite-framebuffer arcade hardware (1987–1989)**, originally developed and released by UPL.
 
 This core targets MiSTer FPGA and aims for accurate gameplay behavior, video timing, and sound reproduction.
 
@@ -26,10 +26,11 @@ This core targets MiSTer FPGA and aims for accurate gameplay behavior, video tim
 
 | Field        | Value |
 |--------------|--------|
-| Title        | Champion Baseball |
-| Year         | 1983 |
-| Developer    | Sega/Alpha Denshi |
-| Genre        | Sports |
+| Titles       | Ninja-Kid II, Mutant Night, Ark Area, Atomic Robo-Kid, Omega Fighter |
+| Sets         | 16 |
+| Year         | 1987–1989 |
+| Developer    | UPL |
+| Genre        | Platform / Shoot-'em-up |
 | Players      | 1–2 alternating |
 
 ---
@@ -41,9 +42,8 @@ Default MiSTer gamepad mapping:
 | Input | Action |
 |-------|--------|
 | D-Pad / Joystick | Move |
-| A | Throw |
-| B | Steal |
-| X | Changes |
+| A | Attack |
+| B | Jump |
 | Select | Insert Coin |
 | Start | 1 Player Start |
 | Right Shoulder | 2 Player Start |
@@ -54,8 +54,9 @@ Default MiSTer gamepad mapping:
 ## Features
 
 - Arcade-accurate CPU timing
-- Sprite priority and layer handling
-- High score saving support
+- Sprite framebuffer with overdraw stencil
+- Three-layer scrolling backgrounds
+- MC8123 sound CPU decryption
 - MiSTer-compatible .mra provided
 - Verified ROM definitions with checksums
 
@@ -102,6 +103,6 @@ Do not request ROM files in issues or discussions.
 ## Credits
 
 FPGA core development: RodimusFVC  
-Original arcade game © Sega/Alpha Denshi (1983)
+Original arcade games © UPL (1987–1989)
 
 ---

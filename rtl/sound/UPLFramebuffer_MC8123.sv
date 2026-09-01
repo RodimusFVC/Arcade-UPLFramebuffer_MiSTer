@@ -6,11 +6,9 @@
 //  eight decrypt_typeN networks). Purely combinational: type/swap/param fall out of
 //  XORs of the key byte, then one of eight bitswap-and-XOR chains selects the result.
 //
-//  Decryption happens on every sound-CPU fetch rather than once at load, so nothing
-//  is rewritten in memory and there is no load-time pass to get wrong. `opcode` is
-//  the CPU's M1, which is what selects the opcode table from the data table -- the
-//  same byte decrypts to two different values depending on how it is fetched, which
-//  is exactly why MAME needs two arrays and this does not.
+//  Decryption runs on every sound-CPU fetch rather than once at load. `opcode` is the
+//  CPU's M1 and selects the opcode key table over the data table, so the same ROM byte
+//  decrypts two ways depending on how it is fetched.
 //
 //  Used by set_id 00 / 03 / 04 / 05 (ninjakd2, ninjakd2c, rdaction, jt104).
 //  Sets 01 / 02 are bootlegs that ship a plain decrypted opcode ROM instead.
@@ -214,8 +212,8 @@ module UPLFramebuffer_MC8123
         end
     endfunction
 
-    // key is inverted first, and an inverted-zero key (original 0xFF) means the byte
-    // is not encrypted at all -- miss this and unencrypted stretches get mangled.
+    // The key is inverted first; an inverted-zero key (original 0xFF) means the byte
+    // is not encrypted.
     wire [7:0] k = ~key;
 
     wire [2:0] ktype = {k[4] ^ k[5],

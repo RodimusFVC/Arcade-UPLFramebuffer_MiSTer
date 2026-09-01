@@ -281,6 +281,27 @@ set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to LED_*
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to BTN_*
 set_instance_assignment -name WEAK_PULL_UP_RESISTOR ON -to BTN_*
 source files.qip
+set_global_assignment -name VHDL_INPUT_VERSION VHDL_2008
+set_global_assignment -name SYSTEMVERILOG_FILE "Arcade-UPLFramebuffer.sv"
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/UPLFramebuffer.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/UPLFramebuffer_MAIN.sv
+set_global_assignment -name QIP_FILE rtl/cpu/T80/T80.qip
+set_global_assignment -name QIP_FILE rtl/sound/v_sound.qip
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/sound/UPLFramebuffer_PCM.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/sound/UPLFramebuffer_MC8123.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/sound/UPLFramebuffer_SND.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/UPLFramebuffer_BGLAYER.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/UPLFramebuffer_SPRITE.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/UPLFramebuffer_VIDEO.sv
+set_global_assignment -name VERILOG_FILE rtl/mister_custom/hiscore.v
+set_global_assignment -name VERILOG_FILE rtl/mister_custom/nvram.v
+set_global_assignment -name VERILOG_FILE rtl/mister_custom/pause.v
+set_global_assignment -name VHDL_FILE rtl/ram_rom/dpram_dc.vhd
+set_global_assignment -name VHDL_FILE rtl/ram_rom/spram.vhd
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ram_rom/sdram.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ram_rom/upl_rom.sv
+set_global_assignment -name VERILOG_FILE rtl/pll.v
+set_global_assignment -name VERILOG_FILE rtl/pll/pll_0002.v
 # MB88-SV-SWAP-2026-07-10: mb88.vhd replaced by the SV core+wrapper (added via files.qip,
 # sourced at line 283). This direct duplicate caused "duplicate entity mb88". REVERT =
 # uncomment the line below AND revert files.qip.

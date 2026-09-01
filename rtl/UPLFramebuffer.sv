@@ -183,9 +183,9 @@ wire bg_mnight  = (set_id >= 8'h06) && (set_id <= 8'h08);
 wire is_robokid = (set_id >= 8'h09) && (set_id <= 8'h0C);
 wire is_omegaf  = (set_id >= 8'h0D) && (set_id <= 8'h0F);
 
-// omegaf's machine_config is robokid()'s plus overrides, so it inherits gfx_robokid
-// wholesale: palette bases fg 0x300 / spr 0x200, col-aligned 2x2 sub-tiles, 5-bit RGB.
-// Its sprite stencil is the one thing that differs, so that stays separate.
+// omegaf's machine_config is robokid() plus overrides, so it inherits gfx_robokid:
+// palette bases fg 0x300 / spr 0x200, col-aligned sub-tiles, 5-bit RGB. Only the
+// sprite stencil differs.
 wire gfx_robokid = is_robokid | is_omegaf;
 
 UPLFramebuffer_VIDEO video

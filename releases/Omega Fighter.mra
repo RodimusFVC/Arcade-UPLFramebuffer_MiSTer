@@ -7,7 +7,7 @@
     <series>Omega Fighter</series>
     <category>Shooter</category>
     <bootleg>no</bootleg>
-    <mameversion>0270</mameversion>
+    <mameversion>0289</mameversion>
     <rbf>UPLFramebuffer</rbf>
 
     <resolution>15kHz</resolution>
@@ -31,14 +31,14 @@
         <dip bits="13,15" name="Coin A" ids="5 Coins/1 Credit,1 Coin/4 Credits,3 Coins/1 Credit,1 Coin/2 Credits,4 Coins/1 Credit,1 Coin/3 Credits,2 Coins/1 Credit,1 Coin/1 Credit"/>
     </switches>
 
-    <!-- Index 0: Main CPU. 0x8000 fixed + whole 1st ROM (banks 0-7) + 6.4l (banks 8-15), packed -->
+    <!-- Index 0: Main CPU. 0x8000 fixed, then banks 0-15 packed -->
     <rom index="0" md5="none" zip="omegaf.zip">
         <part name="1.5.3l" crc="57a7fd96" length="0x8000"/>
         <part name="1.5.3l" crc="57a7fd96"/>
         <part name="6.4l" crc="6277735c"/>
     </rom>
 
-    <!-- Index 1: Sound CPU, 0x10000. No MC8123 and no PCM on omegaf -->
+    <!-- Index 1: Sound CPU -->
     <rom index="1" md5="none" zip="omegaf.zip">
         <part name="7.7m" crc="d40fc8d5"/>
     </rom>
@@ -75,7 +75,6 @@
     </rom>
 
     <!-- Index 5: game-select byte -->
-    <!--   00 ninjakd2  01 ninjakd2a  02 ninjakd2b  03 ninjakd2c  04 rdaction  05 jt104  06 mnight  07 mnightj  08 arkarea  09 robokid  0A robokidj  0B robokidj2  0C robokidj3  0D omegaf  0E omegafa  0F omegafs -->
     <rom index="5"><part>0D</part></rom>
 
     <remark>Omega Fighter (set 1)</remark>

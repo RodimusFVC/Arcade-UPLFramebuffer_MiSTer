@@ -86,8 +86,10 @@ localparam CONF_STR = {
 	"P3,High Score Options;",
 	"P3OR,Autosave Hiscores,Off,On;",
 	"-;",
-	"OJK,SDRAM Rd Latch,Early,Normal,Late;",
-	"-;",
+	// Dev instrument, hidden for release. Uncomment with the .rd_mode() connection
+	// below to bring it back; status[20:19] = 0 = Early is the correct setting.
+	// "OJK,SDRAM Rd Latch,Early,Normal,Late;",
+	// "-;",
 	"DIP;",
 	"-;",
 	"R0,Reset;",
@@ -166,10 +168,8 @@ assign CLK_VIDEO = CLK_60M;
 
 wire reset = RESET | status[0] | buttons[1] | ioctl_download;
 
-// SDRAM power-on reset. Deliberately excludes ioctl_download (and everything
-// else): a reset that includes it holds the load FSM idle for the whole
-// transfer and not one byte lands. High ~15 cycles after config, then low
-// forever. See the vault's decocass_darksoft_dongle_2026-06-10 note.
+// SDRAM power-on reset. Must exclude ioctl_download: a reset including it holds the
+// load FSM idle for the whole transfer and no byte lands. High ~15 cycles, then low.
 reg  [3:0] por_cnt = 4'd0;
 wire       por_reset = ~&por_cnt;
 always @(posedge CLK_60M) if (por_reset) por_cnt <= por_cnt + 1'b1;
@@ -265,10 +265,9 @@ wire [7:0] keycoin_port = ~{m_coin2, m_coin1, 1'b0, m_service, 1'b0, 1'b0, m_sta
 wire [7:0] pad1_port    = ~{2'b00, m_jump1, m_attack1, m_up1_c, m_down1_c, m_left1_c, m_right1_c};
 wire [7:0] pad2_port    = ~{2'b00, m_jump2, m_attack2, m_up2_c, m_down2_c, m_left2_c, m_right2_c};
 
-// HISCORE DISABLED 2026-08-24 -- restore corrupts loaded data, cause not found.
-// Module tied off here AND index-3 commented out in every MRA. To re-enable:
-// restore the wire decls below, uncomment the hiscore instance further down,
-// and un-comment index 3 in the MRAs.
+// Hiscore is DISABLED: restore corrupts loaded data, cause not found. Tied off here,
+// and index 3 is commented out in every MRA. To re-enable, instantiate hiscore (the
+// standard block is in any sibling core), drive the wires below, and restore index 3.
 wire [15:0] hs_address      = 16'd0;
 wire  [7:0] hs_data_in      = 8'd0;
 wire  [7:0] hs_data_out     = 8'd0;       // hiscore disabled; nothing drives this
@@ -366,33 +365,12 @@ UPLFramebuffer uplframebuffer_inst
 
 	.pause(pause_cpu),
 
-	.rd_mode(status[20:19]),       // SDRAM read latch, 0 = Early
+	.rd_mode(2'd0),                 // SDRAM read latch, Early. status[20:19] when the OSD entry is back
 
 	.SDRAM_DQ(SDRAM_DQ), .SDRAM_A(SDRAM_A), .SDRAM_DQML(SDRAM_DQML), .SDRAM_DQMH(SDRAM_DQMH),
 	.SDRAM_BA(SDRAM_BA), .SDRAM_nCS(SDRAM_nCS), .SDRAM_nWE(SDRAM_nWE), .SDRAM_nRAS(SDRAM_nRAS),
 	.SDRAM_nCAS(SDRAM_nCAS), .SDRAM_CKE(SDRAM_CKE), .SDRAM_CLK(SDRAM_CLK)
 );
 
-
-// hiscore #(
-// 	.HS_ADDRESSWIDTH(16),
-// 	.CFG_ADDRESSWIDTH(3),
-// 	.CFG_LENGTHWIDTH(2)
-// ) hi (
-// 	.*,
-// 	.clk(CLK_60M),
-// 	.paused(pause_cpu),
-// 	.autosave(status[27]),
-// 	.ram_address(hs_address),
-// 	.data_from_ram(hs_data_out),
-// 	.data_to_ram(hs_data_in),
-// 	.data_from_hps(ioctl_dout),
-// 	.data_to_hps(ioctl_din),
-// 	.ram_write(hs_write_enable),
-// 	.ram_intent_read(hs_access_read),
-// 	.ram_intent_write(hs_access_write),
-// 	.pause_cpu(hs_pause),
-// 	.configured(hs_configured)
-// );
 
 endmodule

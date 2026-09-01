@@ -60,12 +60,9 @@ module UPLFramebuffer_MAIN
     wire mem_rd = ~mreq_n & ~rd_n;
     wire int_ack = ~m1_n & ~iorq_n;
 
-    //-------------------------------------------------------------------------
-    // Address decode. ninjakd2 (ninjakd2.cpp:1026) and mnight (:1047) relocate
-    // every region, but the control-register and input low-byte offsets are the
-    // same in both and each block stays zero-based at the same bit slice, so
-    // only the chip selects differ. Sprite RAM sits at work+0x1A00 either way.
-    //-------------------------------------------------------------------------
+    // Address decode. ninjakd2 (ninjakd2.cpp:1026) and mnight (:1047) relocate every
+    // region, but the control and input offsets match, so only the selects differ.
+    // Sprite RAM sits at work+0x1A00 either way.
     wire is_mnight  = (set_id >= 8'h06) && (set_id <= 8'h08);  // mnight/mnightj/arkarea
     wire is_robokid = (set_id >= 8'h09) && (set_id <= 8'h0C);  // robokid + 3 japan sets
     wire is_omegaf  = (set_id >= 8'h0D) && (set_id <= 8'h0F);  // omegaf/omegafa/omegafs
@@ -97,32 +94,25 @@ module UPLFramebuffer_MAIN
                                : (A[15:13] == 3'b111);                     // E000-FFFF (also robokid)
 
     // robokid's three banked bg VRAM windows, D000-D3FF / D400-D7FF / D800-DBFF.
-    // Storage only -- nothing renders these yet, but the CPU must read back what it
-    // wrote or the boot test fails. 0x800 per layer, one bank bit (video_init_banked(0x800)).
+    // 0x800 per layer, one bank bit (video_init_banked(0x800)).
     wire cs_bgb   = (is_robokid && (A[15:12] == 4'hD) && (A[11:10] != 2'b11))
                   || (is_omegaf  && (A[15:12] == 4'hC) && (A[11:10] != 2'b00));  // C400-CFFF
 
-    // robokid bg control: DD00-DD05 layer0, DE00-DE05 layer1, DF00-DF05 layer2.
-    // Only the +05 bank register is implemented; scroll/enable are ignored for now.
-    // omegaf: C100-C105 layer0, C200-C205 layer1, C300-C305 layer2. A[9:8] encodes the
-    // layer exactly as robokid's DD/DE/DF does, so the bank-write case below is shared.
+    // Per-layer bg control: robokid DD00/DE00/DF00 +05, omegaf C100/C200/C300 +05.
+    // A[9:8] encodes the layer identically in both, so the bank-write case is shared.
     wire cs_bgctl = (is_robokid && (A[15:10] == 6'b110111) && (A[9:8] != 2'b00))
                   || (is_omegaf  && (A[15:12] == 4'hC) && (A[11:10] == 2'b00)
                                  && (A[9:8] != 2'b00) && (A[7:0] <= 8'h05));
 
-    // omegaf reads its DIPs and both pads through the I/O protection device at
-    // C001-C003. C1E7 (unk_r) must read 0xFF or small enemies never fire; it is not
-    // decoded anywhere, so the read mux default already returns that.
+    // omegaf reads DIPs and pads through the I/O protection device at C001-C003.
+    // C1E7 (unk_r) must read 0xFF or small enemies never fire; the mux default does.
     wire cs_prot = is_omegaf && (A[15:8] == 8'hC0) && (A[7:0] >= 8'd1) && (A[7:0] <= 8'd3);
 
     assign maincpu_addr = A;
 
-    //-------------------------------------------------------------------------
-    // Control registers.
+    // Control registers. Base C200 on ninjakd2, FA00 on mnight/arkarea; same offsets.
     //   +00 soundlatch    +01 bit4 sound reset / bit7 flip screen
     //   +02 bank select   +03 bit0 sprite overdraw   +08..+0C bg scroll+enable
-    //   base C200 on ninjakd2, FA00 on mnight/arkarea - offsets are identical.
-    //-------------------------------------------------------------------------
     reg  [3:0] bank_reg    = 4'd0;
     reg        flip_reg    = 1'b0;
     reg        sndrst_reg  = 1'b0;
@@ -132,8 +122,8 @@ module UPLFramebuffer_MAIN
     reg        bgen        = 1'b1;
     reg  [7:0] latch_reg   = 8'd0;
     reg        latch_wr    = 1'b0;
-    // Per-layer bg control (robokid DD00-DF05, omegaf C100-C305). ninjakd2/mnight
-    // keep the flat scrollx/scrolly/bgen above at ctrl +08..+0C.
+    // Per-layer bg control (robokid DD00-DF05, omegaf C100-C305); ninjakd2/mnight use
+    // the flat registers above.
     reg [15:0] bg_sx   [0:2];
     reg [15:0] bg_sy   [0:2];
     reg  [2:0] bg_bank [0:2];
@@ -145,9 +135,8 @@ module UPLFramebuffer_MAIN
     reg  [7:0] prot_in     = 8'd0;   // io_protection_input
     reg        prot_tick   = 1'b0;   // only bit0 of MAME's tick counter is ever tested
 
-    // robokid/omegaf have a 0x50000 main ROM region (16 banks); the ninjakd2,
-    // mnight and arkarea boards have 0x30000 (8 banks). MAME derives the mask
-    // from the region size in machine_start (ninjakd2.cpp:1521).
+    // Bank mask from ROM region size (ninjakd2.cpp:1521 machine_start): robokid/omegaf
+    // 0x50000 = 16 banks, ninjakd2/mnight/arkarea 0x30000 = 8.
     wire [3:0] bank_mask = (set_id >= 8'h09) ? 4'hF : 4'h7;
 
     wire [2:0] bgbank_mask = is_omegaf ? 3'd7 : 3'd1;
@@ -165,10 +154,9 @@ module UPLFramebuffer_MAIN
             end
             prot0 <= 8'd0; prot1 <= 8'd0; prot2 <= 8'd0; prot_in <= 8'd0;
         end else if (cen_cpu && mem_wr && cs_bgctl) begin
-            // bg_ctrl (ninjakd2.cpp:~1285): +00/+01 scrollx lo/hi, +02/+03 scrolly
-            // lo/hi, +04 bit0 enable. +05 is the bank, masked with MAME's
-            // m_vram_bank_mask = (vram_alloc_size >> 10) - 1: robokid 0x800 -> 1 bit,
-            // omegaf 0x2000 -> 3. A[9:8] encodes the layer for both address maps.
+            // bg_ctrl (ninjakd2.cpp:1285): +00/+01 scrollx, +02/+03 scrolly, +04 bit0
+            // enable, +05 bank masked with (vram_alloc_size >> 10) - 1 — robokid 1 bit,
+            // omegaf 3.
             case (A[7:0])
                 8'h00: bg_sx[ctl_lyr][7:0]  <= cpu_dout;
                 8'h01: bg_sx[ctl_lyr][15:8] <= cpu_dout;
@@ -184,8 +172,7 @@ module UPLFramebuffer_MAIN
                 8'h01: begin sndrst_reg <= cpu_dout[4]; flip_reg <= cpu_dout[7]; end
                 8'h02: bank_reg <= cpu_dout[3:0] & bank_mask;
                 8'h03: overdraw <= cpu_dout[0];
-                // omegaf only: C004-C006 are the protection device. The other sets do
-                // not write these offsets, and prot* is read back only when is_omegaf.
+                // omegaf only: C004-C006 are the protection device.
                 8'h04: prot0 <= cpu_dout;
                 8'h05: prot1 <= cpu_dout;
                 8'h06: begin
@@ -202,10 +189,8 @@ module UPLFramebuffer_MAIN
         end
     end
 
-    //-------------------------------------------------------------------------
-    // omegaf I/O protection read model (ninjakd2.cpp:866). Mode lives in the low two
-    // bits of the C005 register; C001-C003 are offsets 0-2.
-    //-------------------------------------------------------------------------
+    // omegaf I/O protection read model (ninjakd2.cpp:866). Mode is the low two bits
+    // of the C005 register; C001-C003 are offsets 0-2.
     wire [1:0] prot_mode = prot1[1:0];
     wire [1:0] prot_off  = A[1:0] - 2'd1;          // C001-C003 -> 0,1,2
 
@@ -231,8 +216,8 @@ module UPLFramebuffer_MAIN
         endcase
     end
 
-    // MAME increments the tick on every such read and tests the POST-increment value,
-    // so toggle on the leading edge and let the mux read it back the same cycle.
+    // MAME tests the POST-increment tick, so toggle on the leading edge and let the
+    // mux read it back the same cycle.
     wire prot_tick_cond = cs_prot & mem_rd & (prot_mode == 2'd0)
                         & (prot_off == 2'd1) & (prot0[7:5] == 3'b000);
     reg  prot_tick_d;
@@ -253,10 +238,7 @@ module UPLFramebuffer_MAIN
     assign flip_screen     = flip_reg ^ crt_flip;
     assign sprite_overdraw = overdraw;
     // robokid/omegaf drive scroll and enable from their own per-layer control page;
-    // ninjakd2/mnight use the flat registers at ctrl +08..+0C. Layer 0 only for now.
-    // robokid/omegaf drive scroll and enable from their own per-layer control page;
-    // ninjakd2/mnight have a single layer on the flat registers at ctrl +08..+0C, and
-    // hold layers 1 and 2 disabled.
+    // ninjakd2/mnight use the flat registers at ctrl +08..+0C and hold layers 1-2 off.
     wire use_layer_ctrl    = is_robokid | is_omegaf;
     assign bg0_scrollx     = use_layer_ctrl ? bg_sx[0] : scrollx;
     assign bg0_scrolly     = use_layer_ctrl ? bg_sy[0] : scrolly;
@@ -266,10 +248,8 @@ module UPLFramebuffer_MAIN
     assign bg2_scrolly     = bg_sy[2];
     assign bg_layer_en     = use_layer_ctrl ? bg_en_l : {2'b00, bgen};
 
-    //-------------------------------------------------------------------------
-    // Palette RAM — 0x300 entries x 16 bit, big-endian bytes (RGBx_444).
-    // Even byte address is the MSB, so byteena picks the high lane there.
-    //-------------------------------------------------------------------------
+    // Palette RAM: 0x300 entries x 16 bit, big-endian (RGBx_444). The even byte
+    // address is the MSB, so byteena picks the high lane there.
     wire [9:0]  pal_ent  = A[10:1];
     wire        pal_wr   = cen_cpu & mem_wr & cs_pal;
     wire [15:0] pal_q_a;
@@ -284,10 +264,8 @@ module UPLFramebuffer_MAIN
         .data_b(16'd0), .wren_b(1'b0), .q_b(pal_rgb)
     );
 
-    //-------------------------------------------------------------------------
-    // Tilemap RAMs and work RAM. FA00-FFFF inside the work RAM is the sprite
-    // list, which the video side reads through work_addr.
-    //-------------------------------------------------------------------------
+    // Tilemap and work RAM. FA00-FFFF of the work RAM is the sprite list, which the
+    // video side reads through work_addr.
     wire [7:0] fg_q_a, bg0_q_a, bg1_q_a, bg2_q_a, work_q_a;
 
     dpram_dc #(.widthad_a(11), .width_a(8)) fg_ram
@@ -314,11 +292,10 @@ module UPLFramebuffer_MAIN
     wire [7:0] bgb_q_a = (bgb_lyr == 2'd0) ? bg0_q_a :
                          (bgb_lyr == 2'd1) ? bg1_q_a : bg2_q_a;
 
-    // Three 8K per-layer bg VRAMs. Sized for omegaf, whose video_init_banked(0x2000)
-    // makes each layer's full 8K the tilemap itself (128x32 tiles x 2 bytes) rather than
-    // a double buffer -- so all three are genuinely needed, and the old shared 8K
-    // instance could only alias banks 2-7 onto 0-1. robokid allocates 0x800 per layer and
-    // simply uses the bottom quarter. Layer 0 doubles as the flat ninjakd2/mnight tilemap.
+    // Three 8K per-layer bg VRAMs, sized for omegaf: video_init_banked(0x2000) makes
+    // each layer's full 8K the tilemap itself (128x32 tiles x 2 bytes), not a double
+    // buffer. robokid uses the bottom quarter. Layer 0 doubles as the flat
+    // ninjakd2/mnight tilemap.
     dpram_dc #(.widthad_a(13), .width_a(8)) bg0_ram
     (
         .clock_a(clk), .address_a(bg0_addr), .data_a(cpu_dout),
@@ -351,10 +328,8 @@ module UPLFramebuffer_MAIN
         .clock_b(clk), .address_b(work_addr), .data_b(8'd0), .wren_b(1'b0), .q_b(work_data)
     );
 
-    //-------------------------------------------------------------------------
-    // vblank IRQ. MAME asserts HOLD_LINE on the rising edge of vblank and the
-    // acknowledge returns 0xD7 = RST 10h (ninjakd2.cpp:775, :780).
-    //-------------------------------------------------------------------------
+    // vblank IRQ: HOLD_LINE on the rising edge, acknowledge returns 0xD7 = RST 10h
+    // (ninjakd2.cpp:775).
     reg vbl_d = 1'b0;
     reg irq_pending = 1'b0;
 
@@ -365,9 +340,7 @@ module UPLFramebuffer_MAIN
         else if (cen_cpu && int_ack)      irq_pending <= 1'b0;
     end
 
-    //-------------------------------------------------------------------------
     // CPU read mux + Z80
-    //-------------------------------------------------------------------------
     reg [7:0] cpu_din;
 
     always_comb begin

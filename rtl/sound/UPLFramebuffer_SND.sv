@@ -38,11 +38,8 @@ module UPLFramebuffer_SND
     wire io_wr  = ~iorq_n & ~wr_n & m1_n;   // m1_n excludes the interrupt-ack cycle
     wire io_rd  = ~iorq_n & ~rd_n & m1_n;
 
-    ////////////////////////////////////////////////////////////////////////
-    // Memory decode. 0000-BFFF ROM, C000-C7FF RAM, E000 latch, F000 PCM.
-    // E000/F000 are decoded exactly as MAME maps them; the sound program uses
-    // only those addresses (mnight_soundcpu.dasm $00E5: ld a,($E000)).
-    ////////////////////////////////////////////////////////////////////////
+    // Memory decode: 0000-BFFF ROM, C000-C7FF RAM, E000 latch, F000 PCM
+    // (mnight_soundcpu.dasm $00E5: ld a,($E000)).
 
     wire cs_rom   = (A[15:14] != 2'b11);        // 0000-BFFF
     wire cs_ram   = (A[15:11] == 5'b11000);     // C000-C7FF
@@ -52,9 +49,7 @@ module UPLFramebuffer_SND
     assign rom_addr = A;
     assign rom_m1   = ~m1_n;
 
-    ////////////////////////////////////////////////////////////////////////
-    // Sound latch (MAME GENERIC_LATCH_8) — written by the main CPU, read here.
-    ////////////////////////////////////////////////////////////////////////
+    // Sound latch (MAME GENERIC_LATCH_8): written by the main CPU, read here.
 
     // MAME's generic_latch_8 is not cleared by the sound CPU's reset line, so a
     // command written while the CPU is held must survive until it is released.
@@ -64,10 +59,7 @@ module UPLFramebuffer_SND
         if (sound_latch_wr) latch_reg <= sound_latch;
     end
 
-    ////////////////////////////////////////////////////////////////////////
-    // PCM sample command latch. Consumed by the sample player once the PCM
-    // ROM region exists; every game writes 0xF0 (silence) here.
-    ////////////////////////////////////////////////////////////////////////
+    // PCM sample command latch; every game writes 0xF0 (silence) here.
 
     reg [7:0] pcm_reg = 8'd0;
     reg       pcm_wr  = 1'b0;
@@ -83,9 +75,7 @@ module UPLFramebuffer_SND
     assign pcm_cmd    = pcm_reg;
     assign pcm_cmd_wr = pcm_wr;
 
-    ////////////////////////////////////////////////////////////////////////
-    // Work RAM — C000-C7FF (2KB)
-    ////////////////////////////////////////////////////////////////////////
+    // Work RAM, C000-C7FF (2KB)
 
     wire [7:0] ram_dout;
 
@@ -104,15 +94,10 @@ module UPLFramebuffer_SND
         .q_b()
     );
 
-    ////////////////////////////////////////////////////////////////////////
-    // 2x YM2203. I/O $00-$01 = chip 1, $80-$81 = chip 2, A0 selects
-    // address/data. Only chip 1 drives the Z80 IRQ (ninjakd2.cpp:1581).
-    //
-    // jt12_mmr's register block is always @(posedge clk) and is NOT cen-gated,
-    // so a held write re-executes every clock and re-triggers once-only bits
-    // such as key-on. The strobe must therefore be exactly one clk wide — the
-    // opposite of the stretched strobe a cen-gated jt49 needs.
-    ////////////////////////////////////////////////////////////////////////
+    // 2x YM2203. I/O $00-$01 = chip 1, $80-$81 = chip 2, A0 selects address/data;
+    // only chip 1 drives the Z80 IRQ (ninjakd2.cpp:1581).
+    // jt12_mmr's register block is NOT cen-gated, so a held write re-executes every
+    // clock and re-triggers key-on: the strobe must be exactly one clk wide.
 
     wire ym1_sel = io_wr & (A[7:1] == 7'b0000000);   // $00-$01
     wire ym2_sel = io_wr & (A[7:1] == 7'b1000000);   // $80-$81
@@ -173,21 +158,14 @@ module UPLFramebuffer_SND
         .debug_view()
     );
 
-    ////////////////////////////////////////////////////////////////////////
-    // Mix. jt03's combined snd already carries jotego's FM/SSG balance, so the
-    // two chips just sum and halve.
-    ////////////////////////////////////////////////////////////////////////
+    // Mix. jt03's snd already carries jotego's FM/SSG balance, so just sum and halve.
 
     wire signed [16:0] snd_sum = {ym1_snd[15], ym1_snd} + {ym2_snd[15], ym2_snd};
 
     assign sound_out = pause ? 16'sd0 : snd_sum[16:1];
 
-    ////////////////////////////////////////////////////////////////////////
-    // CPU read mux + Z80. MAME maps the YM ports write-only, but the sound
-    // program does read them (mnight_soundcpu.dasm: in a,($01) / in a,($81)),
-    // so the status/SSG read path is wired. Forcing io_rd to 8'hFF restores
-    // MAME's behaviour if that ever proves to matter.
-    ////////////////////////////////////////////////////////////////////////
+    // CPU read mux + Z80. MAME maps the YM ports write-only, but the sound program
+    // reads them (mnight_soundcpu.dasm: in a,($01)), so the read path is wired.
 
     reg [7:0] cpu_din;
 

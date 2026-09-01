@@ -12,14 +12,9 @@ module upl_rom
     input                clk,             // 60 MHz fabric; also clocks the SDRAM controller
     input                por_reset,       // power-on ONLY. Must never include ioctl_download.
 
-    // SDRAM read latch position. sdram.sv programs BURST_LENGTH=4 sequential with auto-precharge, so every read
-    // returns four words wrapping inside the aligned 4-word block. Capturing on the
-    // completion cycle lands on burst word 1, not word 0, which reads back as the low
-    // two bits of the word address incremented mod 4. Verified against HW: the fg char
-    // fetch puts trow[1:0] in exactly those bits, and the service-mode screen showed
-    // glyph rows permuted 0,1,2,3 -> 1,2,3,0 in each half. EARLY samples one cycle
-    // sooner and lands on word 0.
-    input          [1:0] rd_mode,       // 0 = Early, 1 = Normal (old default), 2 = Late
+    // SDRAM read latch. sdram.sv uses BURST_LENGTH=4, so the completion cycle holds
+    // burst word 1; Early samples one cycle sooner and lands on word 0.
+    input          [1:0] rd_mode,       // 0 = Early, 1 = Normal, 2 = Late
 
     // ---- ROM download
     input                ioctl_download,
@@ -64,11 +59,9 @@ module upl_rom
     output        SDRAM_CLK
 );
 
-    //-------------------------------------------------------------------------
     // MRA index map (must match releases/*.mra)
     //   0 maincpu   1 soundcpu   2 chars   5 set-id
     //   6 sprites   7 tiles1     8 tiles2  9 tiles3   10 pcm   11 proms
-    //-------------------------------------------------------------------------
     localparam [7:0] IDX_MAIN = 8'd0,  IDX_SND  = 8'd1,  IDX_CHAR = 8'd2,
                      IDX_SET  = 8'd5,  IDX_SPR  = 8'd6,  IDX_TIL1 = 8'd7,
                      IDX_TIL2 = 8'd8,  IDX_TIL3 = 8'd9,  IDX_PCM  = 8'd10,
@@ -102,9 +95,7 @@ module upl_rom
         endcase
     end
 
-    //-------------------------------------------------------------------------
     // Game select byte (MRA index 5)
-    //-------------------------------------------------------------------------
     always_ff @(posedge clk)
         if (ioctl_wr && ioctl_index == IDX_SET) set_id <= ioctl_data;
 
@@ -112,16 +103,12 @@ module upl_rom
     // runs opcodes and data from the same image.
     wire use_opcodes = (set_id == 8'h01) || (set_id == 8'h02);
 
-    // MC8123 sets. They never use the pre-decrypted opcode ROM (that is the 01/02
-    // bootlegs only), so rom_snd_opcodes is free to hold the key instead -- which is
-    // what makes this cost ZERO extra block RAM.
+    // MC8123 sets never use the pre-decrypted opcode ROM (01/02 bootlegs only), so
+    // rom_snd_opcodes holds the key instead and costs no extra block RAM.
     wire mc8123 = (set_id == 8'h00) || (set_id == 8'h03)
                || (set_id == 8'h04) || (set_id == 8'h05);
 
-    //-------------------------------------------------------------------------
-    // Main CPU ROM — BRAM. Stream is 0x0000-0x7FFF fixed then the bank window,
-    // so the bank image starts at download offset 0x8000 (see the MRA).
-    //-------------------------------------------------------------------------
+    // Main CPU ROM (BRAM). 0x0000-0x7FFF fixed, bank image from download offset 0x8000.
     wire [18:0] mc_off      = ioctl_addr[18:0];
     wire        mc_is_fixed = (mc_off < 19'h08000);
     wire [18:0] mc_bank_off = mc_off - 19'h08000;
@@ -147,20 +134,15 @@ module upl_rom
 
     assign maincpu_data = maincpu_addr[15] ? mc_bank_q : mc_fixed_q;
 
-    //-------------------------------------------------------------------------
-    // Sound CPU ROM — BRAM. 0x00000-0x0FFFF data, 0x10000-0x17FFF opcodes.
-    //-------------------------------------------------------------------------
+    // Sound CPU ROM (BRAM). 0x00000-0x0FFFF data, 0x10000-0x17FFF opcodes.
     wire [16:0] sc_off   = ioctl_addr[16:0];
     wire        sc_is_op = sc_off[16];
     wire        sc_wr    = ioctl_wr && (ioctl_index == IDX_SND);
 
     wire [7:0] sc_op_q, sc_lo_q, sc_hi_q;
 
-    // UPLFramebuffer_SND decodes cs_rom = (A[15:14] != 2'b11), i.e. 0000-BFFF only, so
-    // the top 16K of a single 64K instance is physically unreachable. Split 32K+16K and
-    // hand 16 M10K blocks back -- they pay for the per-layer bg VRAM in MAIN. The MRA
-    // still supplies C000-FFFF; those bytes simply land nowhere, as before they landed
-    // somewhere never read.
+    // SND decodes cs_rom = (A[15:14] != 2'b11), so only 0000-BFFF is reachable.
+    // Split 32K+16K to free 16 M10K blocks; the MRA's C000-FFFF bytes land nowhere.
     dpram_dc #(.widthad_a(15), .width_a(8)) rom_snd_lo          // 0000-7FFF
     (
         .clock_a(clk), .address_a(audiocpu_addr[14:0]),
@@ -179,10 +161,9 @@ module upl_rom
 
     wire [7:0] sc_data_q = audiocpu_addr[15] ? sc_hi_q : sc_lo_q;
 
-    // MC8123 key table index: bitswap<12>(addr,15,14,13,12,11,10,8,6,4,2,1,0), with
-    // bit 11 = addr[15]. Only 0x0000-0x7FFF is encrypted, so that bit is always 0 and
-    // just 2K of each table is live -- the MRA hands us the two used halves packed
-    // back to back, opcode table then data table, 4K total.
+    // MC8123 key index: bitswap<12>(addr,15,14,13,12,11,10,8,6,4,2,1,0). Bit 11 is
+    // addr[15], always 0 over the encrypted 0000-7FFF, so the MRA packs the two live
+    // 2K halves back to back: opcode table then data table, 4K total.
     wire [10:0] tbl_num = {audiocpu_addr[14], audiocpu_addr[13], audiocpu_addr[12],
                            audiocpu_addr[11], audiocpu_addr[10], audiocpu_addr[8],
                            audiocpu_addr[6],  audiocpu_addr[4],  audiocpu_addr[2],
@@ -195,18 +176,16 @@ module upl_rom
     (
         .clock_a(clk), .address_a(sc_op_addr),
         .data_a(8'd0), .wren_a(1'b0), .q_a(sc_op_q),
-        // Opcodes occupy only 0x10000-0x17FFF. The region is 0x20000 and the MRA
-        // fills all of it, so bit 15 must gate the write or 0x18000+ aliases back
-        // onto 0x0000 and overwrites the opcodes with the data half.
-        // On MC8123 sets this same RAM holds the 4K key instead.
+        // Opcodes occupy 0x10000-0x17FFF of a 0x20000 region the MRA fills, so bit 15
+        // must gate the write or 0x18000+ aliases onto 0x0000. MC8123 sets: key RAM.
         .clock_b(clk),
         .address_b(key_wr ? {3'd0, ioctl_addr[11:0]} : sc_off[14:0]),
         .data_b(ioctl_data),
         .wren_b(key_wr || (sc_wr && sc_is_op && !sc_off[15])), .q_b()
     );
 
-    // In-flight decrypt. m1 is stable for the whole Z80 cycle (~12 fabric clocks at
-    // cen_snd), so the same value addresses the key and selects the table here.
+    // In-flight decrypt. m1 is stable for the whole Z80 cycle, so it both addresses
+    // the key and selects the table.
     wire [7:0] sc_dec;
 
     UPLFramebuffer_MC8123 mc8123_dec
@@ -217,16 +196,12 @@ module upl_rom
         .dec   (sc_dec)
     );
 
-    // 0x8000-0xBFFF is NOT encrypted (MAME decodes only the first 0x8000), so it
-    // passes through untouched.
+    // 0x8000-0xBFFF is not encrypted (MAME decodes only the first 0x8000).
     assign audiocpu_data = mc8123 ? (audiocpu_addr[15] ? sc_data_q : sc_dec)
                          : (use_opcodes && audiocpu_m1 && !audiocpu_addr[15])
                            ? sc_op_q : sc_data_q;
 
-    //-------------------------------------------------------------------------
-    // SDRAM. Read clients are served round-robin; writes always win so the
-    // download never stalls behind video fetches.
-    //-------------------------------------------------------------------------
+    // SDRAM. Read clients round-robin; writes always win so downloads never stall.
     wire [5:0] req = {pcm_req, tile3_req, tile2_req, tile1_req, spr_req, char_req};
 
     reg  [2:0] rr    = 3'd0;   // rotating priority pointer
@@ -234,13 +209,11 @@ module upl_rom
     reg  [5:0] ack_r = 6'd0;
     reg  [7:0] rd_q  = 8'd0;
 
-    // A client that was acked last cycle cannot drop req until the cycle after, so
-    // mask it out here rather than letting it win a slot the guards below would then
-    // veto -- that would burn an arbiter cycle doing nothing.
+    // A client acked last cycle cannot drop req until the cycle after, so mask it
+    // out here rather than burn an arbiter slot the guards below would veto.
     wire [5:0] req_eff = req & ~ack_r;
 
-    // Rotating scan starting at rr. No modulo: a non-power-of-2 '%' would
-    // synthesize a divider. Unrolls to a priority mux chain.
+    // Rotating scan from rr. No modulo: a non-power-of-2 '%' synthesizes a divider.
     reg [2:0] pick;
     reg       pick_v;
     reg [2:0] scan;
@@ -257,28 +230,21 @@ module upl_rom
             scan = (scan == 3'd5) ? 3'd0 : (scan + 3'd1);
         end
 
-        // char (client 0) jumps the queue. It is the ONLY client with a hard deadline
-        // and no slack: UPLFramebuffer_VIDEO's fg FSM restarts every 8 pixels and hands
-        // rowbits to the display whether or not the fetch completed, whereas every bg
-        // layer carries a +32-pixel lookahead and cur/nxt/new staging worth two groups.
-        // Under fair round-robin with three bg layers active, fg gets ~2.4 slots per
-        // 80-clock group and needs 4 -- the "glittery wrong characters" on robokid and
-        // omegaf. Its demand is bounded at 4 accesses per group and then it idles, so
-        // priority here cannot starve the tile layers.
+        // char (client 0) jumps the queue: it is the only client with no lookahead,
+        // and its fg FSM hands rowbits to the display whether the fetch completed or
+        // not. Demand is bounded at 4 accesses per group, so it cannot starve the rest.
         if (req_eff[3'd0]) begin
             pick   = 3'd0;
             pick_v = 1'b1;
         end
     end
 
-    // ---- gfx_unscramble (ninjakd2.cpp:2249 lineswap_gfx_roms), done IN FLIGHT --
-    // MAME rotates the low (bit+1) address bits left by one at load time:
+    // gfx_unscramble, in flight (ninjakd2.cpp:2249 lineswap_gfx_roms). MAME rotates
+    // the low (bit+1) address bits left at load:
     //   da[bit:1] = sa[bit-1:0], da[0] = sa[bit]; bits above `bit` unchanged.
-    // SDRAM holds the raw ROM exactly as the MRA supplies it and the inverse
-    // rotate is applied here, so the video side addresses plain unscrambled
-    // space. chars rotate about bit 13, sprites and tiles1 about bit 14.
-    // Applied by init_ninjakd2 / init_bootleg / init_mnight, i.e. set_id 00-08;
-    // robokid and omegaf use empty_init and are not scrambled.
+    // SDRAM holds the raw ROM and the inverse rotate is applied here. chars rotate
+    // about bit 13, sprites and tiles1 about bit 14. set_id 00-08 only; robokid and
+    // omegaf use empty_init and are not scrambled.
     wire gfx_scr = (set_id <= 8'h08);
 
     wire [14:0] char_sa  = gfx_scr ? {char_addr[14],     char_addr[0],  char_addr[13:1]}   : char_addr;
@@ -297,20 +263,12 @@ module upl_rom
         endcase
     end
 
-    //-------------------------------------------------------------------------
-    // 16-bit read cache -- the SDRAM bandwidth halver.
-    //
-    // Every SDRAM word holds TWO bytes this hardware will ask for, so caching the
-    // last words per client turns every second byte fetch into a hit that costs no
-    // SDRAM cycle at all. The pairing differs by set because the unscramble is done
-    // in flight: unscrambled clients (robokid/omegaf, and tiles2/3/pcm always) pair
-    // (da, da+1), while the scrambled ones pair (da, da+2) since sa[0] = da[1].
-    // TWO slots per client cover both orders for the 4-byte-per-row fetches, which
-    // walk da+0..da+3 -- one slot alone would thrash on the scrambled pairing.
-    //
-    // Contents are ROM, so a new download is the only thing that can invalidate.
-    // Set CACHE_EN to 0 to fall back to one SDRAM read per byte.
-    //-------------------------------------------------------------------------
+    // 16-bit read cache: every SDRAM word holds two bytes this hardware will ask
+    // for, so every second byte fetch becomes a free hit. Pairing differs by set —
+    // unscrambled clients pair (da, da+1), scrambled ones (da, da+2) since
+    // sa[0] = da[1] — so TWO slots per client are needed to cover the 4-byte row
+    // fetches without thrashing. Contents are ROM; only a download invalidates.
+    // CACHE_EN = 0 falls back to one SDRAM read per byte.
     localparam CACHE_EN = 1'b1;
 
     reg [22:0] c_tag [0:5][0:1];
@@ -332,14 +290,14 @@ module upl_rom
     reg         sd_old_ready;
     reg   [8:0] sd_refresh_cnt;
 
-    // WRITE-DROP-FIX: latch every download byte the instant it arrives, whatever
-    // sd_busy is doing. A strobe landing on a busy cycle is otherwise lost forever.
+    // Latch every download byte on arrival whatever sd_busy is doing; a strobe
+    // landing on a busy cycle is otherwise lost.
     reg         wr_pend;
     reg  [23:0] wr_addr;
     reg   [7:0] wr_data;
 
-    // Deferred read capture for RD_LATE. cur/sd_lsb are
-    // snapshotted because the arbiter may start another read on the next cycle.
+    // Deferred read capture for RD_LATE; cur/sd_lsb are snapshotted because the
+    // arbiter may start another read next cycle.
     reg         rd_pend = 1'b0;
     reg   [2:0] rd_cur  = 3'd0;
     reg         rd_lsbp = 1'b0;
@@ -349,8 +307,7 @@ module upl_rom
 
     localparam [1:0] RD_EARLY = 2'd0, RD_NORMAL = 2'd1, RD_LATE = 2'd2;
 
-    // sd_dout is sdram.sv's `dout`, itself a register of SDRAM_DQ, so a one-deep delay
-    // of it is the bus value from one cycle earlier - burst word 0 instead of word 1.
+    // sd_dout is a register of SDRAM_DQ, so a one-deep delay gives burst word 0.
     reg [15:0] sd_dout_d1;
     always_ff @(posedge clk) sd_dout_d1 <= sd_dout;
 
@@ -358,17 +315,15 @@ module upl_rom
 
     assign ioctl_wait = sd_busy || (ioctl_wr && in_sdram);
 
-    // A hit needs no SDRAM cycle, so it may be served while a read is in flight for
-    // another client -- that is where the reclaimed bandwidth actually comes from.
-    // rd_q and ack_r are shared, so only ONE ack may fire per cycle and a real
-    // completion always wins; the hit simply waits for the next free cycle.
+    // A hit needs no SDRAM cycle, so it can be served while another client's read is
+    // in flight. rd_q/ack_r are shared: one ack per cycle, and a completion wins.
     wire sd_complete = sd_busy && sd_ready && !sd_rd && !sd_wr;
     wire comp_ack    = (sd_complete && sd_was_rd && (rd_mode != RD_LATE)) || rd_pend;
     wire serve_hit   = c_hit && !comp_ack && !ack_r[pick] && !ioctl_download;
 
     always_ff @(posedge clk) begin
-        // por_reset ONLY - a reset that includes ioctl_download would hold this
-        // FSM idle for the whole transfer and not one byte would land.
+        // por_reset ONLY: a reset including ioctl_download would idle this FSM for
+        // the whole transfer and no byte would land.
         if (por_reset) begin
             sd_rd <= 0; sd_wr <= 0; sd_refresh <= 0; sd_busy <= 0; sd_was_rd <= 0;
             sd_refresh_cnt <= 9'd0; sd_old_ready <= 1'b1; wr_pend <= 1'b0; ack_r <= 6'd0;
@@ -379,14 +334,11 @@ module upl_rom
                 c_lru[ci] <= 1'b0;
             end
         end else begin
-            // AUTO_REFRESH: 8192 rows / 64 ms = one every 7.8125 us = 468 cycles
-            // at 60 MHz. Toggled unconditionally and OUTSIDE the arbiter - the
-            // controller edge-detects it (refresh ^ refresh_old) and services it
-            // from STATE_IDLE ahead of rd/wr, so the toggle is never lost. Sitting
-            // it in the arbiter's else-chain let a continuously-requesting client
-            // starve it, and a 1-cycle terminal count could be missed outright.
-            // NOTE: the controller's own cycles_per_refresh parameter is dead code
-            // (declared, never referenced); this toggle is the only refresh source.
+            // AUTO_REFRESH: 8192 rows / 64 ms = 7.8125 us = 468 cycles at 60 MHz.
+            // Toggled unconditionally and OUTSIDE the arbiter so a busy client cannot
+            // starve it; the controller edge-detects it and services it from IDLE.
+            // This toggle is the only refresh source — sdram.sv's cycles_per_refresh
+            // is declared but never referenced.
             if (sd_refresh_cnt == 9'd467) begin
                 sd_refresh_cnt <= 9'd0;
                 sd_refresh     <= ~sd_refresh;
@@ -431,14 +383,11 @@ module upl_rom
                     sd_din   <= {wr_data, wr_data};
                     sd_bs    <= wr_addr[0] ? 2'b10 : 2'b01;
                     sd_wr    <= 1; sd_busy <= 1; sd_was_rd <= 0;
-                    // Keep a request that arrived on this very cycle: the capture
-                    // above sets wr_pend/addr/data, and a bare `wr_pend <= 0` here
-                    // would win (last assignment) and silently drop that byte.
-                    // ioctl_wait is low on this cycle, so it does happen.
+                    // Keep a request arriving this cycle: a bare `wr_pend <= 0` here
+                    // would win as the last assignment and drop that byte.
                     wr_pend  <= (ioctl_wr && in_sdram);
-                // !ack_r[pick] && !c_hit: never start a fetch for a client whose ack is
-                // already up or is being served from the cache this cycle, or its next
-                // read completes against the previous word (one-fetch-stale).
+                // !ack_r[pick] && !c_hit: never fetch for a client whose ack is already
+                // up or is being served from cache, or its next read is one fetch stale.
                 end else if (pick_v && !ioctl_download && !rd_pend && !ack_r[pick] && !c_hit) begin
                     sd_addr   <= {3'd0, cli_byte[23:1]};
                     sd_lsb    <= cli_byte[0];
@@ -459,8 +408,8 @@ module upl_rom
                 c_lru[rd_cur]                <= ~c_lru[rd_cur];
             end
 
-            // Cache hit: ack straight away, no SDRAM access. Rotate the pointer the
-            // same way a real service does so one client cannot monopolise the port.
+            // Cache hit: ack immediately and rotate the pointer as a real service
+            // would, so one client cannot monopolise the port.
             if (serve_hit) begin
                 rd_q        <= cli_byte[0] ? c_word[15:8] : c_word[7:0];
                 ack_r[pick] <= 1'b1;
@@ -481,9 +430,8 @@ module upl_rom
     assign tile3_data = rd_q;
     assign pcm_data   = rd_q;
 
-    // Refresh interval is clock-rate dependent: 8192 rows / 64 ms = 7.8125 us.
-    // At 60 MHz that is 468 cycles; the stock 780 would refresh every 13 us and
-    // lose data. Startup is 100 us = 6060 cycles.
+    // Clock-rate dependent: 468 cycles = 7.8125 us at 60 MHz (stock 780 would be
+    // 13 us and lose data). Startup 100 us = 6060 cycles.
     sdram #(.sdram_startup_cycles(14'd6060), .cycles_per_refresh(14'd468)) sdram_i
     (
         .init       (por_reset),

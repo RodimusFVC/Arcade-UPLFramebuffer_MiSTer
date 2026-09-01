@@ -80,10 +80,8 @@ module UPLFramebuffer_PCM
         end
     end
 
-    // MAME stores samples as rom[i] << 7, i.e. unsigned 0..0x7F80. The bytes are
-    // centred on 0x80 (0x00 cannot appear, it terminates), so the offset is DC and
-    // the PCB's analogue path strips it. Subtract it here instead of emitting a
-    // half-scale DC step on every start and stop.
+    // MAME stores samples as rom[i] << 7 (unsigned). Bytes centre on 0x80, so that
+    // offset is DC: subtract it rather than emit a half-scale step on every start/stop.
     wire signed [15:0] centred = $signed({1'b0, cur, 7'd0}) - 16'sd16384;
 
     assign sample_out = (pause || !playing) ? 16'sd0 : centred;

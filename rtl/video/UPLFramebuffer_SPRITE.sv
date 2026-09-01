@@ -2,23 +2,14 @@
 //
 //  UPLFramebuffer_SPRITE.sv — sprite framebuffer engine.
 //
-//  This board's defining feature: sprites are rendered into a persistent 256x256
-//  framebuffer rather than composited per scanline, so disabling the clear leaves
-//  trails from previous frames (ninjakd2.cpp header comment).
-//
-//  Rendering runs during vblank, which is also what the cycle budget requires: the
-//  fg and bg tile fetches already use ~85% of the SDRAM arbiter during active
-//  display, so the engine only fits if it has vblank largely to itself.
-//
-//  ninjakd2.cpp reference points:
-//    draw_sprites()   — exactly 96 16x16 sprites per frame, a big (32x32) sprite
-//                       counting as 4, a disabled sprite still counting as 1
+//  Sprites render into a persistent 256x256 framebuffer rather than per scanline,
+//  so disabling the clear leaves trails. Rendering runs during vblank. Contents are
+//  {colour[3:0], pen[3:0]}; the video side adds the 0x100 sprite palette base and
+//  pen 0xf marks empty. ninjakd2.cpp reference points:
+//    draw_sprites()   — 96 16x16 sprites per frame, a big (32x32) one counting as 4,
+//                       a disabled sprite still counting as 1
 //    erase_sprites()  — clear to 0xf, or with overdraw only where the stencil hits
 //    stencil_*        — ninjakd2 (pal&0xf0)==0xf0, robokid <0xe0, omegaf always true
-//
-//  The framebuffer stores {colour[3:0], pen[3:0]}; the video side adds the 0x100
-//  sprite palette base. pen 0xf is the transparent/empty marker, and transpen never
-//  writes it, so an empty pixel is unambiguous.
 //
 //============================================================================
 
@@ -52,17 +43,10 @@ module UPLFramebuffer_SPRITE
 
     localparam [12:0] SPR_BASE = 13'h1A00;   // cpu 0xFA00 within the 0xE000 work RAM
 
-    //------------------------------------------------------------------
-    // Framebuffer: 256x256 pixels of {colour[3:0], pen[3:0]}, stored FOUR PIXELS
-    // PER 32-BIT WORD. That is what keeps the clear pass small -- 16384 words
-    // instead of 65536 pixels -- while byte enables keep a single-pixel sprite
-    // write at one clock with no read-modify-write. dpram_dc passes byteena
-    // straight through to altsyncram.
-    //
-    // The write side is the engine's; the read side is shared between the video and
-    // the clear pass, which is safe because they never overlap -- the clear only runs
-    // while the video is blanked.
-    //------------------------------------------------------------------
+    // Framebuffer: 256x256 pixels, FOUR PER 32-BIT WORD, so the clear pass walks
+    // 16384 words not 65536 pixels while byte enables keep a single-pixel write at
+    // one clock. The read port is shared by the video and the clear pass; they never
+    // overlap because the clear only runs while the video is blanked.
     reg  [13:0] fb_waddr;
     reg  [31:0] fb_wdata;
     reg   [3:0] fb_wbe;
@@ -90,13 +74,10 @@ module UPLFramebuffer_SPRITE
                     : (fb_rsel == 2'd2) ? fb_bq[23:16]
                                         : fb_bq[31:24];
 
-    // dpram_dc, not a hand-rolled array: Quartus 17.0 will not infer block RAM from
-    // per-byte writes to a plain reg array (`mem[a][7:0] <= ...`) and builds a 16384:1
-    // mux instead — 524k registers, 240k combinational nodes, device blown 3x over.
-    // dpram_dc wraps altsyncram, whose byteena is native. Its VHDL declares
-    // byteena_a/b := (others => '1'), so the instances that leave them unconnected
-    // (the CPU ROMs, fg/bg/work RAM) are unaffected; MAIN's palette_ram already
-    // drives byteena_a the same way.
+    // Must be dpram_dc, not a reg array: Quartus 17.0 will not infer block RAM from
+    // per-byte writes to `mem[a][7:0]` and builds a 16384:1 mux instead, blowing the
+    // device. altsyncram's byteena is native and defaults to all-ones, so instances
+    // that leave it unconnected are unaffected.
     dpram_dc #(.widthad_a(14), .width_a(32)) framebuffer
     (
         .clock_a(clk), .address_a(fb_waddr), .data_a(fb_wdata),
@@ -105,9 +86,7 @@ module UPLFramebuffer_SPRITE
         .wren_b(1'b0), .q_b(fb_bq)
     );
 
-    //------------------------------------------------------------------
     // Sprite record decode
-    //------------------------------------------------------------------
     reg  [6:0] spr_idx;      // spriteram entry, 0..95
     reg  [6:0] drawn;        // sprites_drawn, the 96 budget
     reg  [7:0] b_sy, b_sxlo, b_ctrl, b_code, b_col;
@@ -130,13 +109,11 @@ module UPLFramebuffer_SPRITE
     wire        f_flipx = e_flipx ^ flip_screen;
     wire        f_flipy = e_flipy ^ flip_screen;
 
-    // big sprites: code &= ~3 then xor in the quadrant.
-    // ninjakd2 is not robokid_sprites, so big_xshift=0 and big_yshift=1.
+    // Big sprites: code &= ~3 then xor in the quadrant.
     reg  [1:0] qx, qy;       // quadrant being drawn (0..big)
-    // 11-bit code: ninjakd2's sprite ROM is 0x20000 (1024 tiles, bit10 unused) but
-    // mnight/arkarea are 0x30000 = 1536 tiles and need it.
-    // robokid is m_robokid_sprites: big_xshift=1 / big_yshift=0, i.e. bit1 is the
-    // horizontal half and bit0 the vertical -- the opposite of the ninjakd2 family.
+    // 11-bit code: ninjakd2 has 1024 tiles (bit10 unused), mnight/arkarea 1536.
+    // robokid is m_robokid_sprites — big_xshift=1 / big_yshift=0, the opposite of
+    // the ninjakd2 family, so bit1 is the horizontal half and bit0 the vertical.
     wire [1:0] flip_xor = gfx_robokid ? {f_flipx, f_flipy} : {f_flipy, f_flipx};
     wire [1:0] quad_xor = gfx_robokid ? {qx[0], qy[0]}     : {qy[0], qx[0]};
     wire [10:0] base_code = e_big ? {e_code[10:2], 2'b00} ^ {9'd0, flip_xor}
@@ -146,10 +123,8 @@ module UPLFramebuffer_SPRITE
     wire signed [9:0] cur_x0 = f_sx + (qx[0] ? 10'sd16 : 10'sd0);
     wire signed [9:0] cur_y0 = f_sy + (qy[0] ? 10'sd16 : 10'sd0);
 
-    //------------------------------------------------------------------
     // Row fetch: 8 bytes = 16 pixels, same 2x2 sub-tile layout as the bg
     //   offset = ty[3]*64 + tx[3]*32 + ty[2:0]*4 + tx[2:1]
-    //------------------------------------------------------------------
     reg  [3:0] row;          // 0..15 within the tile
     reg  [2:0] rj;           // ROM byte index, = tx[3:1]
     reg [63:0] rowbits;
@@ -163,8 +138,8 @@ module UPLFramebuffer_SPRITE
     assign spr_addr = spr_addr_r;
     assign spr_req  = spr_req_r;
 
-    // 1024 tiles x 128 bytes = 0x20000, so the region address is 17 bits
-    // row_2x2 is 0 1 / 2 3, col_2x2 (robokid) is 0 2 / 1 3 -- the sub-tile bits swap.
+    // 1024 tiles x 128 bytes = 0x20000, so the region address is 17 bits.
+    // row_2x2 is 0 1 / 2 3, col_2x2 (robokid) is 0 2 / 1 3: the sub-tile bits swap.
     wire sub_hi = gfx_robokid ? rj[2] : ty[3];
     wire sub_lo = gfx_robokid ? ty[3] : rj[2];
     wire [17:0] rom_addr = {cur_code, sub_hi, sub_lo, ty[2:0], rj[1:0]};
@@ -176,9 +151,7 @@ module UPLFramebuffer_SPRITE
     wire signed [9:0] py = cur_y0 + {6'd0, row};
     wire in_frame = (px >= 0) && (px <= 10'sd255) && (py >= 0) && (py <= 10'sd255);
 
-    //------------------------------------------------------------------
     // Engine
-    //------------------------------------------------------------------
     localparam S_IDLE = 4'd0, S_ERASE = 4'd1, S_REC   = 4'd2, S_DECIDE = 4'd3,
                S_ROWREQ= 4'd4, S_ROWACK= 4'd5, S_WRITE = 4'd6, S_NEXTROW= 4'd7,
                S_NEXTQ = 4'd8, S_NEXTSP= 4'd9, S_DONE  = 4'd10;
@@ -210,18 +183,16 @@ module UPLFramebuffer_SPRITE
                             st         <= S_ERASE;
                         end
 
-                // One pixel per clock. Port B reads erase_addr; the value arrives one
-                // clock later, and the write for that address is issued then, always
-                // behind the read pointer so there is no read-after-write hazard.
+                // One pixel per clock. The port B read lands one clock later and its
+                // write is issued then, always behind the read pointer.
                 S_ERASE: begin
                     er_prev <= erase_addr;
                     er_pv   <= 1'b1;
                     if (er_pv) begin
                         fb_waddr <= er_prev;
                         fb_wdata <= 32'h0F0F0F0F;
-                        // no overdraw: clear all four pixels. overdraw: only the ones
-                        // the stencil hits (ninjakd2.cpp stencil_ninjakd2 = colour 15),
-                        // tested per byte so one word covers four pixels either way.
+                        // No overdraw clears all four pixels; overdraw clears only the
+                        // lanes the stencil hits, tested per byte.
                         fb_wbe   <= overdraw ? {st3, st2, st1, st0} : 4'b1111;
                         // never assert wren with no lane enabled
                         fb_we    <= overdraw ? |{st3, st2, st1, st0} : 1'b1;

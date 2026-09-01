@@ -7,7 +7,7 @@
     <series>Ninja-Kid II</series>
     <category>Platform</category>
     <bootleg>no</bootleg>
-    <mameversion>0270</mameversion>
+    <mameversion>0289</mameversion>
     <rbf>UPLFramebuffer</rbf>
 
     <resolution>15kHz</resolution>
@@ -35,10 +35,9 @@
     </switches>
 
     <!-- Index 5: game-select byte -->
-    <!--   00 ninjakd2  01 ninjakd2a  02 ninjakd2b  03 ninjakd2c  04 rdaction  05 jt104  06 mnight  07 mnightj  08 arkarea  09 robokid  0A robokidj  0B robokidj2  0C robokidj3  0D omegaf  0E omegafa  0F omegafs -->
     <rom index="5"><part>00</part></rom>
 
-    <!-- Index 0: Main CPU. 0x0000-0x7FFF fixed, then the 0x4000 banks from region 0x10000 -->
+    <!-- Index 0: Main CPU. 0x8000 fixed, then banks -->
     <rom index="0" md5="none" zip="ninjakd2.zip">
         <part name="1.3s" crc="3cdbb906"/>
         <part name="2.3q" crc="b5ce9a1a"/>
@@ -47,14 +46,12 @@
         <part name="5.3m" crc="5dac9426"/>
     </rom>
 
-    <!-- Index 1: Sound CPU (0x0000-0x17FFF; 0x10000+ is the MC8123 decrypted-opcode half) -->
+    <!-- Index 1: Sound CPU -->
     <rom index="1" md5="none" zip="ninjakd2.zip">
         <part name="6.3h" crc="d3a18a79"/>
     </rom>
 
-    <!-- Index 12: MC8123 key. The encrypted range is only 0000-7FFF, so the key
-         index's top bit is always 0 and just two 2K halves are ever read -- load the
-         opcode table then the data table, packed back to back (4K total). -->
+    <!-- Index 12: MC8123 key. Opcode table then data table, 2K each -->
     <rom index="12" md5="none" zip="ninjakd2.zip">
         <part name="ninjakd2.key" crc="ec25318f" offset="0x0000" length="0x800"/>
         <part name="ninjakd2.key" crc="ec25318f" offset="0x1000" length="0x800"/>

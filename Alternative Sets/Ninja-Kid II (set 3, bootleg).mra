@@ -7,7 +7,7 @@
     <series>Ninja-Kid II</series>
     <category>Platform</category>
     <bootleg>yes</bootleg>
-    <mameversion>0270</mameversion>
+    <mameversion>0289</mameversion>
     <rbf>UPLFramebuffer</rbf>
 
     <resolution>15kHz</resolution>
@@ -34,7 +34,7 @@
         <dip bits="13,15" name="Coin A" ids="5 Coins/1 Credit,4 Coins/1 Credit,3 Coins/1 Credit,2 Coins/1 Credit,1 Coin/4 Credits,1 Coin/3 Credits,1 Coin/2 Credits,1 Coin/1 Credit"/>
     </switches>
 
-    <!-- Index 0: Main CPU. 0x0000-0x7FFF fixed, then the 0x4000 banks from region 0x10000 -->
+    <!-- Index 0: Main CPU. 0x8000 fixed, then banks -->
     <rom index="0" md5="none" zip="ninjakd2.zip|ninjakd2b.zip">
         <part name="1.3s" crc="cb4f4624"/>
         <part name="2.3q" crc="0ad0c100"/>
@@ -43,7 +43,7 @@
         <part name="5.3m" crc="5dac9426"/>
     </rom>
 
-    <!-- Index 1: Sound CPU (0x0000-0x17FFF; 0x10000+ is the MC8123 decrypted-opcode half) -->
+    <!-- Index 1: Sound CPU -->
     <rom index="1" md5="none" zip="ninjakd2.zip|ninjakd2b.zip">
         <part name="nk2_06.bin" crc="7bfe6c9e" offset="0x8000" length="0x8000"/>
         <part repeat="0x8000">00</part>
@@ -73,7 +73,6 @@
     </rom>
 
     <!-- Index 5: game-select byte -->
-    <!--   00 ninjakd2  01 ninjakd2a  02 ninjakd2b  03 ninjakd2c  04 rdaction  05 jt104  06 mnight  07 mnightj  08 arkarea  09 robokid  0A robokidj  0B robokidj2  0C robokidj3  0D omegaf  0E omegafa  0F omegafs -->
     <rom index="5"><part>02</part></rom>
 
     <remark>Ninja-Kid II / NinjaKun Ashura no Shou (set 3, bootleg?)</remark>
