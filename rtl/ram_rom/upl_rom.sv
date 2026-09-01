@@ -201,6 +201,11 @@ module upl_rom
     reg  [5:0] ack_r = 6'd0;
     reg  [7:0] rd_q  = 8'd0;
 
+    // A client that was acked last cycle cannot drop req until the cycle after, so
+    // mask it out here rather than letting it win a slot the guards below would then
+    // veto -- that would burn an arbiter cycle doing nothing.
+    wire [5:0] req_eff = req & ~ack_r;
+
     // Rotating scan starting at rr. No modulo: a non-power-of-2 '%' would
     // synthesize a divider. Unrolls to a priority mux chain.
     reg [2:0] pick;
@@ -212,11 +217,24 @@ module upl_rom
         pick_v = 1'b0;
         scan   = rr;
         for (k = 0; k < 6; k = k + 1) begin
-            if (!pick_v && req[scan]) begin
+            if (!pick_v && req_eff[scan]) begin
                 pick   = scan;
                 pick_v = 1'b1;
             end
             scan = (scan == 3'd5) ? 3'd0 : (scan + 3'd1);
+        end
+
+        // char (client 0) jumps the queue. It is the ONLY client with a hard deadline
+        // and no slack: UPLFramebuffer_VIDEO's fg FSM restarts every 8 pixels and hands
+        // rowbits to the display whether or not the fetch completed, whereas every bg
+        // layer carries a +32-pixel lookahead and cur/nxt/new staging worth two groups.
+        // Under fair round-robin with three bg layers active, fg gets ~2.4 slots per
+        // 80-clock group and needs 4 -- the "glittery wrong characters" on robokid and
+        // omegaf. Its demand is bounded at 4 accesses per group and then it idles, so
+        // priority here cannot starve the tile layers.
+        if (req_eff[3'd0]) begin
+            pick   = 3'd0;
+            pick_v = 1'b1;
         end
     end
 

@@ -94,6 +94,8 @@ wire [15:0] maincpu_addr;   wire [3:0] maincpu_bank;   wire [7:0] maincpu_data;
 wire [15:0] audiocpu_addr;  wire audiocpu_m1;          wire [7:0] audiocpu_data;
 wire [14:0] char_addr;      wire char_req, char_ack;   wire [7:0] char_data;
 wire [18:0] tile1_addr;     wire tile1_req, tile1_ack; wire [7:0] tile1_data;
+wire [18:0] tile2_addr;     wire tile2_req, tile2_ack; wire [7:0] tile2_data;
+wire [18:0] tile3_addr;     wire tile3_req, tile3_ack; wire [7:0] tile3_data;
 wire [17:0] spr_addr;       wire spr_req, spr_ack;     wire [7:0] spr_data;
 wire [15:0] fb_raddr;       wire [7:0] fb_rdata;       wire spr_draw_window;
 wire [15:0] pcm_addr;       wire pcm_req, pcm_ack;     wire [7:0] pcm_data;
@@ -120,8 +122,8 @@ upl_rom rom
     .char_addr(char_addr),  .char_req(char_req),  .char_ack(char_ack),  .char_data(char_data),
     .spr_addr(spr_addr), .spr_req(spr_req), .spr_ack(spr_ack), .spr_data(spr_data),
     .tile1_addr(tile1_addr), .tile1_req(tile1_req), .tile1_ack(tile1_ack), .tile1_data(tile1_data),
-    .tile2_addr(19'd0), .tile2_req(1'b0), .tile2_ack(), .tile2_data(),
-    .tile3_addr(19'd0), .tile3_req(1'b0), .tile3_ack(), .tile3_data(),
+    .tile2_addr(tile2_addr), .tile2_req(tile2_req), .tile2_ack(tile2_ack), .tile2_data(tile2_data),
+    .tile3_addr(tile3_addr), .tile3_req(tile3_req), .tile3_ack(tile3_ack), .tile3_data(tile3_data),
     .pcm_addr(pcm_addr), .pcm_req(pcm_req), .pcm_ack(pcm_ack), .pcm_data(pcm_data),
 
     .SDRAM_DQ(SDRAM_DQ), .SDRAM_A(SDRAM_A), .SDRAM_DQML(SDRAM_DQML), .SDRAM_DQMH(SDRAM_DQMH),
@@ -134,11 +136,14 @@ upl_rom rom
 wire [7:0] sound_latch;
 wire       sound_latch_wr;
 wire       snd_reset;
-wire       flip_screen, sprite_overdraw, bg_enable;
-wire [15:0] bg_scrollx, bg_scrolly;
+wire        flip_screen, sprite_overdraw;
+wire  [2:0] bg_layer_en;
+wire [15:0] bg0_scrollx, bg0_scrolly, bg1_scrollx, bg1_scrolly, bg2_scrollx, bg2_scrolly;
 
 wire [10:0] fg_vram_addr;  wire [7:0] fg_vram_data;
-wire [12:0] bg_vram_addr;  wire [7:0] bg_vram_data;
+wire [12:0] bg0_vram_addr; wire [7:0] bg0_vram_data;
+wire [12:0] bg1_vram_addr; wire [7:0] bg1_vram_data;
+wire [12:0] bg2_vram_addr; wire [7:0] bg2_vram_data;
 wire [12:0] work_addr;     wire [7:0] work_data;
 wire  [9:0] pal_index;     wire [15:0] pal_rgb;
 
@@ -160,10 +165,15 @@ UPLFramebuffer_MAIN main_board
     .crt_flip(crt_flip),
     .flip_screen(flip_screen),
     .sprite_overdraw(sprite_overdraw),
-    .bg_scrollx(bg_scrollx), .bg_scrolly(bg_scrolly), .bg_enable(bg_enable),
+    .bg0_scrollx(bg0_scrollx), .bg0_scrolly(bg0_scrolly),
+    .bg1_scrollx(bg1_scrollx), .bg1_scrolly(bg1_scrolly),
+    .bg2_scrollx(bg2_scrollx), .bg2_scrolly(bg2_scrolly),
+    .bg_layer_en(bg_layer_en),
 
     .fg_vram_addr(fg_vram_addr), .fg_vram_data(fg_vram_data),
-    .bg_vram_addr(bg_vram_addr), .bg_vram_data(bg_vram_data),
+    .bg0_vram_addr(bg0_vram_addr), .bg0_vram_data(bg0_vram_data),
+    .bg1_vram_addr(bg1_vram_addr), .bg1_vram_data(bg1_vram_data),
+    .bg2_vram_addr(bg2_vram_addr), .bg2_vram_data(bg2_vram_data),
     .work_addr(work_addr),       .work_data(work_data),
     .pal_index(pal_index),       .pal_rgb(pal_rgb),
 
@@ -199,10 +209,17 @@ UPLFramebuffer_VIDEO video
     .DIAG_SPROFF(diag_sproff),       // DIAG-REVERT-2026-08-30
 
     .fg_vram_addr(fg_vram_addr), .fg_vram_data(fg_vram_data),
-    .bg_vram_addr(bg_vram_addr), .bg_vram_data(bg_vram_data),
-    .bg_scrollx(bg_scrollx), .bg_scrolly(bg_scrolly), .bg_enable(bg_enable),
+    .bg0_vram_addr(bg0_vram_addr), .bg0_vram_data(bg0_vram_data),
+    .bg1_vram_addr(bg1_vram_addr), .bg1_vram_data(bg1_vram_data),
+    .bg2_vram_addr(bg2_vram_addr), .bg2_vram_data(bg2_vram_data),
+    .bg0_scrollx(bg0_scrollx), .bg0_scrolly(bg0_scrolly),
+    .bg1_scrollx(bg1_scrollx), .bg1_scrolly(bg1_scrolly),
+    .bg2_scrollx(bg2_scrollx), .bg2_scrolly(bg2_scrolly),
+    .bg_layer_en(bg_layer_en),
     .char_addr(char_addr), .char_req(char_req), .char_ack(char_ack), .char_data(char_data),
     .tile1_addr(tile1_addr), .tile1_req(tile1_req), .tile1_ack(tile1_ack), .tile1_data(tile1_data),
+    .tile2_addr(tile2_addr), .tile2_req(tile2_req), .tile2_ack(tile2_ack), .tile2_data(tile2_data),
+    .tile3_addr(tile3_addr), .tile3_req(tile3_req), .tile3_ack(tile3_ack), .tile3_data(tile3_data),
     .fb_raddr(fb_raddr), .fb_rdata(fb_rdata), .spr_draw_window(spr_draw_window),
     .pal_index(pal_index), .pal_rgb(pal_rgb),
 

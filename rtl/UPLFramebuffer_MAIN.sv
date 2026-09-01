@@ -36,13 +36,16 @@ module UPLFramebuffer_MAIN
     input                crt_flip,       // OSD CRT Flip, XORed into flip_screen
     output               flip_screen,
     output               sprite_overdraw,
-    output        [15:0] bg_scrollx,
-    output        [15:0] bg_scrolly,
-    output               bg_enable,
+    output        [15:0] bg0_scrollx, bg0_scrolly,
+    output        [15:0] bg1_scrollx, bg1_scrolly,
+    output        [15:0] bg2_scrollx, bg2_scrolly,
+    output         [2:0] bg_layer_en,
 
     // ---- video-side read ports
     input         [10:0] fg_vram_addr,   output  [7:0] fg_vram_data,
-    input         [12:0] bg_vram_addr,   output  [7:0] bg_vram_data,
+    input         [12:0] bg0_vram_addr,  output  [7:0] bg0_vram_data,
+    input         [12:0] bg1_vram_addr,  output  [7:0] bg1_vram_data,
+    input         [12:0] bg2_vram_addr,  output  [7:0] bg2_vram_data,
     input         [12:0] work_addr,      output  [7:0] work_data,   // sprite RAM lives at 1A00-1FFF
     input          [9:0] pal_index,      output [15:0] pal_rgb,
 
@@ -251,10 +254,17 @@ module UPLFramebuffer_MAIN
     assign sprite_overdraw = overdraw;
     // robokid/omegaf drive scroll and enable from their own per-layer control page;
     // ninjakd2/mnight use the flat registers at ctrl +08..+0C. Layer 0 only for now.
+    // robokid/omegaf drive scroll and enable from their own per-layer control page;
+    // ninjakd2/mnight have a single layer on the flat registers at ctrl +08..+0C, and
+    // hold layers 1 and 2 disabled.
     wire use_layer_ctrl    = is_robokid | is_omegaf;
-    assign bg_scrollx      = use_layer_ctrl ? bg_sx[0] : scrollx;
-    assign bg_scrolly      = use_layer_ctrl ? bg_sy[0] : scrolly;
-    assign bg_enable       = use_layer_ctrl ? bg_en_l[0] : bgen;
+    assign bg0_scrollx     = use_layer_ctrl ? bg_sx[0] : scrollx;
+    assign bg0_scrolly     = use_layer_ctrl ? bg_sy[0] : scrolly;
+    assign bg1_scrollx     = bg_sx[1];
+    assign bg1_scrolly     = bg_sy[1];
+    assign bg2_scrollx     = bg_sx[2];
+    assign bg2_scrolly     = bg_sy[2];
+    assign bg_layer_en     = use_layer_ctrl ? bg_en_l : {2'b00, bgen};
 
     //-------------------------------------------------------------------------
     // Palette RAM — 0x300 entries x 16 bit, big-endian bytes (RGBx_444).
@@ -313,22 +323,24 @@ module UPLFramebuffer_MAIN
     (
         .clock_a(clk), .address_a(bg0_addr), .data_a(cpu_dout),
         .wren_a(bg0_wr), .q_a(bg0_q_a),
-        .clock_b(clk), .address_b(bg_vram_addr), .data_b(8'd0), .wren_b(1'b0),
-        .q_b(bg_vram_data)
+        .clock_b(clk), .address_b(bg0_vram_addr), .data_b(8'd0), .wren_b(1'b0),
+        .q_b(bg0_vram_data)
     );
 
     dpram_dc #(.widthad_a(13), .width_a(8)) bg1_ram
     (
         .clock_a(clk), .address_a(bgb_addr), .data_a(cpu_dout),
         .wren_a(bg1_wr), .q_a(bg1_q_a),
-        .clock_b(clk), .address_b(13'd0), .data_b(8'd0), .wren_b(1'b0), .q_b()
+        .clock_b(clk), .address_b(bg1_vram_addr), .data_b(8'd0), .wren_b(1'b0),
+        .q_b(bg1_vram_data)
     );
 
     dpram_dc #(.widthad_a(13), .width_a(8)) bg2_ram
     (
         .clock_a(clk), .address_a(bgb_addr), .data_a(cpu_dout),
         .wren_a(bg2_wr), .q_a(bg2_q_a),
-        .clock_b(clk), .address_b(13'd0), .data_b(8'd0), .wren_b(1'b0), .q_b()
+        .clock_b(clk), .address_b(bg2_vram_addr), .data_b(8'd0), .wren_b(1'b0),
+        .q_b(bg2_vram_data)
     );
 
 

@@ -41,17 +41,18 @@ module UPLFramebuffer_VIDEO
     input         [7:0] fg_vram_data,
 
     // ---- bg tilemap RAM (in MAIN) and its scroll/enable registers
-    output       [12:0] bg_vram_addr,
-    input         [7:0] bg_vram_data,
-    input        [15:0] bg_scrollx,
-    input        [15:0] bg_scrolly,
-    input               bg_enable,
+    output       [12:0] bg0_vram_addr,   input [7:0] bg0_vram_data,
+    output       [12:0] bg1_vram_addr,   input [7:0] bg1_vram_data,
+    output       [12:0] bg2_vram_addr,   input [7:0] bg2_vram_data,
+    input        [15:0] bg0_scrollx, bg0_scrolly,
+    input        [15:0] bg1_scrollx, bg1_scrolly,
+    input        [15:0] bg2_scrollx, bg2_scrolly,
+    input         [2:0] bg_layer_en,
 
     // ---- bg tile ROM (SDRAM, via upl_rom)
-    output       [18:0] tile1_addr,
-    output              tile1_req,
-    input               tile1_ack,
-    input         [7:0] tile1_data,
+    output       [18:0] tile1_addr,  output tile1_req,  input tile1_ack,  input [7:0] tile1_data,
+    output       [18:0] tile2_addr,  output tile2_req,  input tile2_ack,  input [7:0] tile2_data,
+    output       [18:0] tile3_addr,  output tile3_req,  input tile3_ack,  input [7:0] tile3_data,
 
     // ---- char ROM (SDRAM, via upl_rom)
     output       [14:0] char_addr,
@@ -220,176 +221,73 @@ module UPLFramebuffer_VIDEO
     end
 
     ////////////////////////////////////////////////////////////////////////
-    // Background tilemap: 16x16 tiles, 32x32 map = 512x512, wrapping, with a
-    // 16-bit scroll on each axis (ninjakd2.cpp bg_ctrl, only the low 9 bits can
-    // matter against a 512-pixel map).
-    //   tile   = ((hi & 0xc0) << 2) | lo      (ninjakd2_get_bg_tile_info)
-    //   flipyx = (hi >> 4) & 3
-    //   color  = hi & 0x0f, palette base 0x000
-    //
-    // The fetch is phase-locked to MAP tile boundaries, not screen ones. With a
-    // scroll that is not a multiple of 16 a screen-aligned 16-pixel group spans
-    // two map tiles, so aligning to h_cnt[3:0] would tear on most scroll values.
-    // Locking to bmx[3:0] gives exactly one map tile per fetch at any scroll.
+    // Background tilemaps. ninjakd2/mnight/arkarea have one layer; robokid and
+    // omegaf have three identical ones (robokid_get_bg_tile_info<Layer>), so the
+    // engine lives in UPLFramebuffer_BGLAYER and is instantiated three times.
+    // On the single-layer sets MAIN holds bg_layer_en[2:1] low and those two idle.
     ////////////////////////////////////////////////////////////////////////
 
-    // Fetch is RASTER-aligned (h_cnt[3:0]), not map-tile aligned. Phase-locking the
-    // window to map tiles cannot work: the window boundary would have to line up
-    // with the end-of-line wrap as well, and it only does when the scroll happens
-    // to be a multiple of 16. Instead a 16-pixel screen group spans at most TWO map
-    // tiles, so the display keeps both and selects per pixel on dmx[8:4].
-    //
-    // Pipeline, one group = 16 pixels:
-    //   cur <= nxt, nxt <= new, and a fetch for the tile two groups ahead starts.
-    // The +32 lookahead is what makes nxt already valid when a group straddles.
+    wire [3:0] bg0_color, bg0_pix, bg1_color, bg1_pix, bg2_color, bg2_pix;
 
-    wire [8:0] fh = (h_cnt >= H_TOTAL - 9'd32) ? (h_cnt - (H_TOTAL - 9'd32)) : (h_cnt + 9'd32);
-    wire [8:0] fv = (h_cnt >= H_TOTAL - 9'd32) ? ((v_cnt == V_TOTAL - 1'd1) ? 9'd0 : v_cnt + 1'd1) : v_cnt;
+    UPLFramebuffer_BGLAYER #(.H_TOTAL(H_TOTAL), .V_TOTAL(V_TOTAL)) bg_layer0
+    (
+        .clk(clk), .cen_pix(cen_pix), .reset(reset), .fetch_en(fetch_en),
+        .en(bg_layer_en[0] | (DIAG_BGMODE == 2'd1)),
+        .h_cnt(h_cnt), .v_cnt(v_cnt), .flip_screen(flip_screen),
+        .gfx_robokid(gfx_robokid), .is_omegaf(is_omegaf), .bg_mnight(bg_mnight),
+        .scrollx(bg0_scrollx), .scrolly(bg0_scrolly),
+        .DIAG_BGMODE(DIAG_BGMODE),
+        .vram_addr(bg0_vram_addr), .vram_data(bg0_vram_data),
+        .rom_addr(tile1_addr), .rom_req(tile1_req), .rom_ack(tile1_ack), .rom_data(tile1_data),
+        .color(bg0_color), .pix(bg0_pix)
+    );
 
-    // Full 9 bits, no truncation to the 256-wide screen. The lookahead runs past
-    // 255 into hblank, and those positions still have a well-defined map column --
-    // it is the one a straddling group at the end of the visible line needs. All of
-    // this is mod-512 arithmetic against a 512-pixel map, which is what makes the
-    // flipped case fall out correctly too.
-    wire [8:0] fsx = flip_screen ? (9'd255 - fh) : fh;
-    wire [8:0] fsy = flip_screen ? (9'd255 - fv) : fv;
-    // X is 11-bit because omegaf's bg map is 128x32 tiles = 2048 px wide; the other
-    // sets are 32x32 = 512 and simply ignore the top two bits (see bg_fcol below).
-    wire [10:0] fmx = {2'b00, fsx} + bg_scrollx[10:0];
-    wire  [8:0] fmy = fsy + bg_scrolly[8:0];
+    UPLFramebuffer_BGLAYER #(.H_TOTAL(H_TOTAL), .V_TOTAL(V_TOTAL)) bg_layer1
+    (
+        .clk(clk), .cen_pix(cen_pix), .reset(reset), .fetch_en(fetch_en), .en(bg_layer_en[1]),
+        .h_cnt(h_cnt), .v_cnt(v_cnt), .flip_screen(flip_screen),
+        .gfx_robokid(gfx_robokid), .is_omegaf(is_omegaf), .bg_mnight(bg_mnight),
+        .scrollx(bg1_scrollx), .scrolly(bg1_scrolly),
+        .DIAG_BGMODE(2'd0),
+        .vram_addr(bg1_vram_addr), .vram_data(bg1_vram_data),
+        .rom_addr(tile2_addr), .rom_req(tile2_req), .rom_ack(tile2_ack), .rom_data(tile2_data),
+        .color(bg1_color), .pix(bg1_pix)
+    );
 
-    // map coordinates of the pixel being displayed, and of the next group's first
-    wire [8:0] h_p1 = (h_cnt == H_TOTAL - 1'd1) ? 9'd0 : h_cnt + 1'd1;
-    wire [8:0] dsx  = flip_screen ? (9'd255 - h_cnt) : h_cnt;
-    wire [8:0] dsx1 = flip_screen ? (9'd255 - h_p1)  : h_p1;
-    wire [10:0] dmx  = {2'b00, dsx}  + bg_scrollx[10:0];
-    wire [10:0] dmx1 = {2'b00, dsx1} + bg_scrollx[10:0];
+    UPLFramebuffer_BGLAYER #(.H_TOTAL(H_TOTAL), .V_TOTAL(V_TOTAL)) bg_layer2
+    (
+        .clk(clk), .cen_pix(cen_pix), .reset(reset), .fetch_en(fetch_en), .en(bg_layer_en[2]),
+        .h_cnt(h_cnt), .v_cnt(v_cnt), .flip_screen(flip_screen),
+        .gfx_robokid(gfx_robokid), .is_omegaf(is_omegaf), .bg_mnight(bg_mnight),
+        .scrollx(bg2_scrollx), .scrolly(bg2_scrolly),
+        .DIAG_BGMODE(2'd0),
+        .vram_addr(bg2_vram_addr), .vram_data(bg2_vram_data),
+        .rom_addr(tile3_addr), .rom_req(tile3_req), .rom_ack(tile3_ack), .rom_data(tile3_data),
+        .color(bg2_color), .pix(bg2_pix)
+    );
 
-    // Map column, masked to the map width so the non-omegaf sets keep wrapping mod 512.
-    wire [6:0] bg_fcol  = is_omegaf ? fmx[10:4]  : {2'b00, fmx[8:4]};
-    wire [6:0] bg_dcol  = is_omegaf ? dmx[10:4]  : {2'b00, dmx[8:4]};
-    wire [6:0] bg_dcol1 = is_omegaf ? dmx1[10:4] : {2'b00, dmx1[8:4]};
-    wire [4:0] bg_frow  = fmy[8:4];
+    // DIAG-REVERT-2026-08-30: these taps were layer-0 internals and now live inside
+    // UPLFramebuffer_BGLAYER. The top level leaves them unconnected.
+    assign DIAG_bst    = 4'd0;
+    assign DIAG_btidx  = 10'd0;
+    assign DIAG_bty    = 4'd0;
+    assign DIAG_bstart = 1'b0;
 
-    // Scan. ninjakd2/mnight are plain row-major; robokid_bg_scan and omegaf_bg_scan
-    // both put the HIGH column bits above the row:
-    //   (col & 0x0f) | ((row & 0x1f) << 4) | ((col & mask) << 5)
-    wire [11:0] bg_scan = gfx_robokid ? {bg_fcol[6:4], bg_frow, bg_fcol[3:0]}
-                                      : {2'b00, bg_frow, bg_fcol[4:0]};
+    // Transparency: pen 0xf, EXCEPT robokid's bg0 and ninjakd2/mnight's single layer,
+    // which stay opaque -- VIDEO_START_robokid sets the transparent pen on tilemaps 1
+    // and 2 only, while VIDEO_START_omegaf sets it on all three.
+    // DIAG_BGMODE 1 (swatch) deliberately ignores the enable, so black in mode 1 means
+    // the mixing or palette is at fault rather than the layer simply being off.
+    wire bg0_op = (DIAG_BGMODE == 2'd1) ? 1'b1
+                : bg_layer_en[0] && (is_omegaf ? (bg0_pix != 4'hF) : 1'b1);
+    wire bg1_op = bg_layer_en[1] && (bg1_pix != 4'hF);
+    wire bg2_op = bg_layer_en[2] && (bg2_pix != 4'hF);
 
-    wire bg_group_end = (h_cnt[3:0] == 4'd15);
-
-    reg  [3:0] bst = 4'd0;
-    reg  [2:0] bj  = 3'd0;
-    reg  [7:0] blo = 8'd0, bhi = 8'd0;
-
-    // latched at the start of the fetch so nothing drifts as h_cnt advances
-    reg [11:0] bfetch_tidx = 12'd0;
-    reg  [3:0] bfetch_my   = 4'd0;
-
-    reg [63:0] bg_new_rowbits = 64'd0;  reg [3:0] bg_new_color = 4'd0;  reg bg_new_flipx = 1'b0;
-    reg [63:0] bg_nxt_rowbits = 64'd0;  reg [3:0] bg_nxt_color = 4'd0;  reg bg_nxt_flipx = 1'b0;
-    reg [63:0] bg_cur_rowbits = 64'd0;  reg [3:0] bg_cur_color = 4'd0;  reg bg_cur_flipx = 1'b0;
-    reg  [6:0] bg_cur_col = 7'd0;
-
-    reg [12:0] bg_addr_r;
-    reg [18:0] tile1_addr_r;
-    reg        tile1_req_r;
-
-    assign bg_vram_addr = bg_addr_r;
-    assign tile1_addr   = tile1_addr_r;
-    assign tile1_req    = tile1_req_r;
-
-    // mnight/arkarea reuse hi bit4 as tile bit 10 instead of flipx
-    // (ninjakd2.cpp mnight_get_bg_tile_info); ninjakd2 keeps a 10-bit index.
-    // DIAG-REVERT-2026-08-30: original -> wire [9:0] bg_tile = {bhi[7:6], blo};
-    // robokid/omegaf: tile = ((hi&0x10)<<7)|((hi&0x20)<<5)|((hi&0xc0)<<2)|lo, a 12-bit
-    // index using all of hi[7:4], and tileinfo.set() passes flip 0 -- those sets have NO
-    // bg flip at all. mnight/arkarea reuse hi bit4 as tile bit 10 (so no flipx either);
-    // ninjakd2 keeps a 10-bit index with flipx on bit4.
-    wire [11:0] bg_tile  = (DIAG_BGMODE == 2'd2) ? bfetch_tidx
-                         : gfx_robokid           ? {bhi[4], bhi[5], bhi[7:6], blo}
-                                                 : {1'b0, bg_mnight & bhi[4], bhi[7:6], blo};
-    wire        bg_flipy = gfx_robokid ? 1'b0 : bhi[5];
-    wire [3:0] bg_ty    = bg_flipy ? ~bfetch_my : bfetch_my;
-
-    // gfx_8x8x4_row_2x2_group_packed_msb: 128 bytes per 16x16 tile, four 8x8
-    // sub-tiles in 0 1 / 2 3 order, so the byte offset is a pure concatenation:
-    //   ty[3]*64 + tx[3]*32 + ty[2:0]*4 + tx[2:1]
-    // Fetch index j is tx[3:1], so j ascending walks tx 0..15 left to right.
-    // row_2x2 is 0 1 / 2 3, col_2x2 (robokid) is 0 2 / 1 3 -- the two sub-tile
-    // select bits swap (emu/video/generic.cpp:145,175).
-    wire bg_sub_hi = gfx_robokid ? bj[2]    : bg_ty[3];
-    wire bg_sub_lo = gfx_robokid ? bg_ty[3] : bj[2];
-    wire [18:0] bg_rom_addr = {bg_tile, bg_sub_hi, bg_sub_lo, bg_ty[2:0], bj[1:0]};
-
-    always_ff @(posedge clk) begin
-        if (reset || !fetch_en) begin
-            bst <= 4'd0; tile1_req_r <= 1'b0; bj <= 3'd0;
-            if (reset) bg_cur_col <= 7'd0;
-        end else begin
-            if (cen_pix && bg_group_end) begin
-                bg_cur_rowbits <= bg_nxt_rowbits;
-                bg_cur_color   <= bg_nxt_color;
-                bg_cur_flipx   <= bg_nxt_flipx;
-                bg_cur_col     <= bg_dcol1;
-                bg_nxt_rowbits <= bg_new_rowbits;
-                bg_nxt_color   <= bg_new_color;
-                bg_nxt_flipx   <= bg_new_flipx;
-                bst <= 4'd0;
-                bj  <= 3'd0;
-            end else begin
-                case (bst)
-                    4'd0: begin
-                        bfetch_tidx <= bg_scan;
-                        bfetch_my   <= fmy[3:0];
-                        bg_addr_r   <= {bg_scan, 1'b0};
-                        bst         <= 4'd1;
-                    end
-                    4'd1: bst <= 4'd2;                                  // BRAM latency
-                    4'd2: begin blo <= bg_vram_data; bg_addr_r <= {bfetch_tidx, 1'b1}; bst <= 4'd3; end
-                    4'd3: bst <= 4'd4;
-                    4'd4: begin
-                        bhi          <= bg_vram_data;
-                        bg_new_color <= bg_vram_data[3:0];
-                        // mnight/arkarea use bit4 as tile bit 10, so they have no flipx
-                        bg_new_flipx <= (gfx_robokid | bg_mnight) ? 1'b0 : bg_vram_data[4];
-                        bst          <= 4'd5;
-                    end
-                    4'd5: begin tile1_addr_r <= bg_rom_addr; tile1_req_r <= 1'b1; bst <= 4'd6; end
-                    4'd6: if (tile1_ack) begin
-                              // j ascends 0..7 and byte j belongs at [63-8j -: 8],
-                              // which is exactly a byte-wide shift left.
-                              bg_new_rowbits <= {bg_new_rowbits[55:0], tile1_data};
-                              tile1_req_r <= 1'b0;
-                              if (bj == 3'd7) bst <= 4'd7;
-                              else begin bj <= bj + 3'd1; bst <= 4'd5; end
-                          end
-                    default: ;
-                endcase
-            end
-        end
-    end
-
-    // DIAG-REVERT-2026-08-30
-    assign DIAG_bst    = bst;
-    assign DIAG_btidx  = bfetch_tidx[9:0];
-    assign DIAG_bty    = bg_ty;
-    assign DIAG_bstart = bg_group_end;
-
-    // Display select: a screen group spans at most two map tiles, so pick between
-    // cur and nxt on the map column of this pixel.
-    wire        bg_use_nxt   = (bg_dcol != bg_cur_col);
-    wire [63:0] bg_sel_bits  = bg_use_nxt ? bg_nxt_rowbits : bg_cur_rowbits;
-    wire  [3:0] bg_color     = bg_use_nxt ? bg_nxt_color   : bg_cur_color;
-    wire        bg_sel_flipx = bg_use_nxt ? bg_nxt_flipx   : bg_cur_flipx;
-
-    wire [3:0] bg_tx  = bg_sel_flipx ? ~dmx[3:0] : dmx[3:0];
-    wire [5:0] bshift = {2'd0, ~bg_tx} << 2;         // nibble 15 is the leftmost pixel
-    wire [3:0] bg_pix_raw = (bg_sel_bits >> bshift) & 64'hF;
-
-    // DIAG-REVERT-2026-08-30: original -> wire [3:0] bg_pix = bg_pix_raw;
-    wire [3:0] bg_pix = (DIAG_BGMODE == 2'd3) ? 4'd1 : bg_pix_raw;
+    // All three bg layers share palette base 0x000 (GFXDECODE entries 2/3/4).
+    wire [9:0] bg0_index = (DIAG_BGMODE == 2'd1) ? {2'b00, v_cnt[7:4], h_cnt[7:4]}
+                                                 : {2'b00, bg0_color, bg0_pix};
+    wire [9:0] bg1_index = {2'b00, bg1_color, bg1_pix};
+    wire [9:0] bg2_index = {2'b00, bg2_color, bg2_pix};
 
     ////////////////////////////////////////////////////////////////////////
     // Pixel out. Palette RAM adds a cycle, so the syncs are delayed to match
@@ -416,9 +314,6 @@ module UPLFramebuffer_VIDEO
     // Swatch deliberately ignores bg_enable, so a black screen in mode 1 means the
     // mixing or palette is at fault, while black in 2/3 with 1 working means
     // bg_enable is low.
-    wire [9:0] bg_index = (DIAG_BGMODE == 2'd1) ? {2'b00, v_cnt[7:4], h_cnt[7:4]}
-                                                : {2'b00, bg_color, bg_pix};
-    wire       bg_show  = (DIAG_BGMODE == 2'd1) ? 1'b1 : bg_enable;
 
     // The fg tilemap's transparent pen is 0xF, not 0 (ninjakd2.cpp:449
     // set_transparent_pen(0xf)). Testing pen 0 instead inverts it: empty areas, which
@@ -429,9 +324,19 @@ module UPLFramebuffer_VIDEO
     // GFXDECODE bases: ninjakd2 fg 0x200 / spr 0x100, gfx_robokid fg 0x300 / spr 0x200.
     // Both put bg at 0x000. Reading robokid's sprites at 0x100 hits a range it never
     // writes, so they come out black.
+    // Draw order, back to front (ninjakd2.cpp screen_update_*):
+    //   ninjakd2/mnight : bg0, sprites, fg
+    //   robokid         : bg0, bg1, sprites, bg2, fg   <- bg2 is ABOVE the sprites
+    //   omegaf          : bg0, bg1, bg2, sprites, fg
+    // so bg2 outranks the sprite framebuffer on robokid only.
+    wire top_is_bg2 = bg2_op && !is_omegaf;
+
     assign pal_index = fg_opaque   ? {gfx_robokid ? 2'b11 : 2'b10, color, pix}
+                     : top_is_bg2  ? bg2_index
                      : spr_opaque  ? {gfx_robokid ? 2'b10 : 2'b01, fb_rdata}
-                     : bg_show     ? bg_index
+                     : bg2_op      ? bg2_index
+                     : bg1_op      ? bg1_index
+                     : bg0_op      ? bg0_index
                                    : 10'd0;
 
     // Colour, opacity and syncs must all come out of the SAME pipeline stage.
