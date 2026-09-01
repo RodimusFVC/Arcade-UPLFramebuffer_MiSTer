@@ -42,7 +42,7 @@ module UPLFramebuffer_MAIN
 
     // ---- video-side read ports
     input         [10:0] fg_vram_addr,   output  [7:0] fg_vram_data,
-    input         [10:0] bg_vram_addr,   output  [7:0] bg_vram_data,
+    input         [12:0] bg_vram_addr,   output  [7:0] bg_vram_data,
     input         [12:0] work_addr,      output  [7:0] work_data,   // sprite RAM lives at 1A00-1FFF
     input          [9:0] pal_index,      output [15:0] pal_rgb,
 
@@ -129,7 +129,13 @@ module UPLFramebuffer_MAIN
     reg        bgen        = 1'b1;
     reg  [7:0] latch_reg   = 8'd0;
     reg        latch_wr    = 1'b0;
-    reg  [2:0] bgbank      = 3'd0;   // robokid: one bank bit per bg layer
+    // Per-layer bg control (robokid DD00-DF05, omegaf C100-C305). ninjakd2/mnight
+    // keep the flat scrollx/scrolly/bgen above at ctrl +08..+0C.
+    reg [15:0] bg_sx   [0:2];
+    reg [15:0] bg_sy   [0:2];
+    reg  [2:0] bg_bank [0:2];
+    reg  [2:0] bg_en_l = 3'd0;
+    integer    li;
     reg  [7:0] prot0       = 8'd0;   // omegaf io_protection[0..2], written at C004-C006
     reg  [7:0] prot1       = 8'd0;
     reg  [7:0] prot2       = 8'd0;
@@ -141,19 +147,33 @@ module UPLFramebuffer_MAIN
     // from the region size in machine_start (ninjakd2.cpp:1521).
     wire [3:0] bank_mask = (set_id >= 8'h09) ? 4'hF : 4'h7;
 
+    wire [2:0] bgbank_mask = is_omegaf ? 3'd7 : 3'd1;
+    wire [1:0] ctl_lyr     = A[9:8] - 2'd1;   // C1/C2/C3 and DD/DE/DF -> layer 0/1/2
+
     wire ctrl_wr = cen_cpu & mem_wr & cs_ctrl;
 
     always_ff @(posedge clk) begin
         latch_wr <= 1'b0;
         if (reset) begin
             bank_reg <= 4'd0; flip_reg <= 1'b0; sndrst_reg <= 1'b0;
-            overdraw <= 1'b0; bgen <= 1'b1; bgbank <= 3'd0;
+            overdraw <= 1'b0; bgen <= 1'b1; bg_en_l <= 3'd0;
+            for (li = 0; li < 3; li = li + 1) begin
+                bg_sx[li] <= 16'd0; bg_sy[li] <= 16'd0; bg_bank[li] <= 3'd0;
+            end
             prot0 <= 8'd0; prot1 <= 8'd0; prot2 <= 8'd0; prot_in <= 8'd0;
-        end else if (cen_cpu && mem_wr && cs_bgctl && (A[7:0] == 8'h05)) begin
-            case (A[9:8])                            // DD05/DE05/DF05 -> layer 0/1/2
-                2'd1: bgbank[0] <= cpu_dout[0];
-                2'd2: bgbank[1] <= cpu_dout[0];
-                default: bgbank[2] <= cpu_dout[0];
+        end else if (cen_cpu && mem_wr && cs_bgctl) begin
+            // bg_ctrl (ninjakd2.cpp:~1285): +00/+01 scrollx lo/hi, +02/+03 scrolly
+            // lo/hi, +04 bit0 enable. +05 is the bank, masked with MAME's
+            // m_vram_bank_mask = (vram_alloc_size >> 10) - 1: robokid 0x800 -> 1 bit,
+            // omegaf 0x2000 -> 3. A[9:8] encodes the layer for both address maps.
+            case (A[7:0])
+                8'h00: bg_sx[ctl_lyr][7:0]  <= cpu_dout;
+                8'h01: bg_sx[ctl_lyr][15:8] <= cpu_dout;
+                8'h02: bg_sy[ctl_lyr][7:0]  <= cpu_dout;
+                8'h03: bg_sy[ctl_lyr][15:8] <= cpu_dout;
+                8'h04: bg_en_l[ctl_lyr]     <= cpu_dout[0];
+                8'h05: bg_bank[ctl_lyr]     <= cpu_dout[2:0] & bgbank_mask;
+                default: ;
             endcase
         end else if (ctrl_wr) begin
             case (A[7:0])
@@ -229,11 +249,12 @@ module UPLFramebuffer_MAIN
     assign snd_reset       = sndrst_reg;
     assign flip_screen     = flip_reg ^ crt_flip;
     assign sprite_overdraw = overdraw;
-    assign bg_scrollx      = scrollx;
-    assign bg_scrolly      = scrolly;
-    // omegaf's three banked bg layers are not rendered yet, so hold the layer off
-    // rather than let it paint tile 0 of tiles1 over the screen.
-    assign bg_enable       = bgen & ~is_omegaf;
+    // robokid/omegaf drive scroll and enable from their own per-layer control page;
+    // ninjakd2/mnight use the flat registers at ctrl +08..+0C. Layer 0 only for now.
+    wire use_layer_ctrl    = is_robokid | is_omegaf;
+    assign bg_scrollx      = use_layer_ctrl ? bg_sx[0] : scrollx;
+    assign bg_scrolly      = use_layer_ctrl ? bg_sy[0] : scrolly;
+    assign bg_enable       = use_layer_ctrl ? bg_en_l[0] : bgen;
 
     //-------------------------------------------------------------------------
     // Palette RAM — 0x300 entries x 16 bit, big-endian bytes (RGBx_444).
@@ -257,7 +278,7 @@ module UPLFramebuffer_MAIN
     // Tilemap RAMs and work RAM. FA00-FFFF inside the work RAM is the sprite
     // list, which the video side reads through work_addr.
     //-------------------------------------------------------------------------
-    wire [7:0] fg_q_a, bg_q_a, work_q_a;
+    wire [7:0] fg_q_a, bg0_q_a, bg1_q_a, bg2_q_a, work_q_a;
 
     dpram_dc #(.widthad_a(11), .width_a(8)) fg_ram
     (
@@ -266,29 +287,50 @@ module UPLFramebuffer_MAIN
         .clock_b(clk), .address_b(fg_vram_addr), .data_b(8'd0), .wren_b(1'b0), .q_b(fg_vram_data)
     );
 
-    dpram_dc #(.widthad_a(11), .width_a(8)) bg_ram
+    // Window -> layer. robokid: D000->2, D400->1, D800->0 (reversed vs its DD/DE/DF
+    // control order). omegaf: C400->0, C800->1, CC00->2.
+    wire [1:0]  bgb_lyr  = is_omegaf ? (A[11:10] - 2'd1) : (2'd2 - A[11:10]);
+    wire [2:0]  bgb_bnk  = bg_bank[bgb_lyr];
+    wire [12:0] bgb_addr = {bgb_bnk, A[9:0]};
+
+    wire bgb_wr = cen_cpu & mem_wr & cs_bgb;
+    wire bg0_wr = (cen_cpu & mem_wr & cs_bg) | (bgb_wr & (bgb_lyr == 2'd0));
+    wire bg1_wr =                               bgb_wr & (bgb_lyr == 2'd1);
+    wire bg2_wr =                               bgb_wr & (bgb_lyr == 2'd2);
+
+    // cs_bg is the flat 2K ninjakd2/mnight tilemap; it and cs_bgb are mutually exclusive.
+    wire [12:0] bg0_addr = cs_bg ? {2'b00, A[10:0]} : bgb_addr;
+
+    wire [7:0] bgb_q_a = (bgb_lyr == 2'd0) ? bg0_q_a :
+                         (bgb_lyr == 2'd1) ? bg1_q_a : bg2_q_a;
+
+    // Three 8K per-layer bg VRAMs. Sized for omegaf, whose video_init_banked(0x2000)
+    // makes each layer's full 8K the tilemap itself (128x32 tiles x 2 bytes) rather than
+    // a double buffer -- so all three are genuinely needed, and the old shared 8K
+    // instance could only alias banks 2-7 onto 0-1. robokid allocates 0x800 per layer and
+    // simply uses the bottom quarter. Layer 0 doubles as the flat ninjakd2/mnight tilemap.
+    dpram_dc #(.widthad_a(13), .width_a(8)) bg0_ram
     (
-        .clock_a(clk), .address_a(A[10:0]), .data_a(cpu_dout),
-        .wren_a(cen_cpu & mem_wr & cs_bg), .q_a(bg_q_a),
-        .clock_b(clk), .address_b(bg_vram_addr), .data_b(8'd0), .wren_b(1'b0), .q_b(bg_vram_data)
+        .clock_a(clk), .address_a(bg0_addr), .data_a(cpu_dout),
+        .wren_a(bg0_wr), .q_a(bg0_q_a),
+        .clock_b(clk), .address_b(bg_vram_addr), .data_b(8'd0), .wren_b(1'b0),
+        .q_b(bg_vram_data)
     );
 
-    // robokid: D000->layer2, D400->layer1, D800->layer0 (window order is reversed vs
-    // the DD/DE/DF control order). omegaf: C400->layer0, C800->layer1, CC00->layer2.
-    wire [1:0]  bgb_win  = is_omegaf ? (A[11:10] - 2'd1) : A[11:10];
-    wire        bgb_sel  = is_omegaf ? ((A[11:10] == 2'd1) ? bgbank[0] :
-                                        (A[11:10] == 2'd2) ? bgbank[1] : bgbank[2])
-                                     : ((A[11:10] == 2'd0) ? bgbank[2] :
-                                        (A[11:10] == 2'd1) ? bgbank[1] : bgbank[0]);
-    wire [12:0] bgb_addr = {bgb_win, bgb_sel, A[9:0]};
-    wire  [7:0] bgb_q_a;
-
-    dpram_dc #(.widthad_a(13), .width_a(8)) bgbank_ram
+    dpram_dc #(.widthad_a(13), .width_a(8)) bg1_ram
     (
         .clock_a(clk), .address_a(bgb_addr), .data_a(cpu_dout),
-        .wren_a(cen_cpu & mem_wr & cs_bgb), .q_a(bgb_q_a),
+        .wren_a(bg1_wr), .q_a(bg1_q_a),
         .clock_b(clk), .address_b(13'd0), .data_b(8'd0), .wren_b(1'b0), .q_b()
     );
+
+    dpram_dc #(.widthad_a(13), .width_a(8)) bg2_ram
+    (
+        .clock_a(clk), .address_a(bgb_addr), .data_a(cpu_dout),
+        .wren_a(bg2_wr), .q_a(bg2_q_a),
+        .clock_b(clk), .address_b(13'd0), .data_b(8'd0), .wren_b(1'b0), .q_b()
+    );
+
 
     dpram_dc #(.widthad_a(13), .width_a(8)) work_ram
     (
@@ -327,7 +369,7 @@ module UPLFramebuffer_MAIN
         else if (cs_prot)  cpu_din = prot_dout;
         else if (cs_pal)   cpu_din = A[0] ? pal_q_a[7:0] : pal_q_a[15:8];
         else if (cs_fg)    cpu_din = fg_q_a;
-        else if (cs_bg)    cpu_din = bg_q_a;
+        else if (cs_bg)    cpu_din = bg0_q_a;
         else if (cs_bgb)   cpu_din = bgb_q_a;
         else if (cs_work)  cpu_din = work_q_a;
         else               cpu_din = 8'hFF;

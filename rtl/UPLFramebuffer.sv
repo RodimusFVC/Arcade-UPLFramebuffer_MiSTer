@@ -138,7 +138,7 @@ wire       flip_screen, sprite_overdraw, bg_enable;
 wire [15:0] bg_scrollx, bg_scrolly;
 
 wire [10:0] fg_vram_addr;  wire [7:0] fg_vram_data;
-wire [10:0] bg_vram_addr;  wire [7:0] bg_vram_data;
+wire [12:0] bg_vram_addr;  wire [7:0] bg_vram_data;
 wire [12:0] work_addr;     wire [7:0] work_data;
 wire  [9:0] pal_index;     wire [15:0] pal_rgb;
 
@@ -193,6 +193,7 @@ UPLFramebuffer_VIDEO video
     .flip_screen(flip_screen),
     .bg_mnight(bg_mnight),
     .gfx_robokid(gfx_robokid),
+    .is_omegaf(is_omegaf),
     .DIAG_TILEVIEW(diag_tileview),   // DIAG-REVERT-2026-08-30
     .DIAG_BGMODE(diag_bgmode),       // DIAG-REVERT-2026-08-30
     .DIAG_SPROFF(diag_sproff),       // DIAG-REVERT-2026-08-30

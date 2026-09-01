@@ -151,15 +151,30 @@ module upl_rom
     wire        sc_is_op = sc_off[16];
     wire        sc_wr    = ioctl_wr && (ioctl_index == IDX_SND);
 
-    wire [7:0] sc_data_q, sc_op_q;
+    wire [7:0] sc_op_q, sc_lo_q, sc_hi_q;
 
-    dpram_dc #(.widthad_a(16), .width_a(8)) rom_snd_data
+    // UPLFramebuffer_SND decodes cs_rom = (A[15:14] != 2'b11), i.e. 0000-BFFF only, so
+    // the top 16K of a single 64K instance is physically unreachable. Split 32K+16K and
+    // hand 16 M10K blocks back -- they pay for the per-layer bg VRAM in MAIN. The MRA
+    // still supplies C000-FFFF; those bytes simply land nowhere, as before they landed
+    // somewhere never read.
+    dpram_dc #(.widthad_a(15), .width_a(8)) rom_snd_lo          // 0000-7FFF
     (
-        .clock_a(clk), .address_a(audiocpu_addr),
-        .data_a(8'd0), .wren_a(1'b0), .q_a(sc_data_q),
-        .clock_b(clk), .address_b(sc_off[15:0]),
-        .data_b(ioctl_data), .wren_b(sc_wr && !sc_is_op), .q_b()
+        .clock_a(clk), .address_a(audiocpu_addr[14:0]),
+        .data_a(8'd0), .wren_a(1'b0), .q_a(sc_lo_q),
+        .clock_b(clk), .address_b(sc_off[14:0]),
+        .data_b(ioctl_data), .wren_b(sc_wr && !sc_is_op && !sc_off[15]), .q_b()
     );
+
+    dpram_dc #(.widthad_a(14), .width_a(8)) rom_snd_hi          // 8000-BFFF
+    (
+        .clock_a(clk), .address_a(audiocpu_addr[13:0]),
+        .data_a(8'd0), .wren_a(1'b0), .q_a(sc_hi_q),
+        .clock_b(clk), .address_b(sc_off[13:0]),
+        .data_b(ioctl_data), .wren_b(sc_wr && !sc_is_op && (sc_off[15:14] == 2'b10)), .q_b()
+    );
+
+    wire [7:0] sc_data_q = audiocpu_addr[15] ? sc_hi_q : sc_lo_q;
 
     dpram_dc #(.widthad_a(15), .width_a(8)) rom_snd_opcodes
     (
@@ -231,6 +246,34 @@ module upl_rom
         endcase
     end
 
+    //-------------------------------------------------------------------------
+    // 16-bit read cache -- the SDRAM bandwidth halver.
+    //
+    // Every SDRAM word holds TWO bytes this hardware will ask for, so caching the
+    // last words per client turns every second byte fetch into a hit that costs no
+    // SDRAM cycle at all. The pairing differs by set because the unscramble is done
+    // in flight: unscrambled clients (robokid/omegaf, and tiles2/3/pcm always) pair
+    // (da, da+1), while the scrambled ones pair (da, da+2) since sa[0] = da[1].
+    // TWO slots per client cover both orders for the 4-byte-per-row fetches, which
+    // walk da+0..da+3 -- one slot alone would thrash on the scrambled pairing.
+    //
+    // Contents are ROM, so a new download is the only thing that can invalidate.
+    // Set CACHE_EN to 0 to fall back to one SDRAM read per byte.
+    //-------------------------------------------------------------------------
+    localparam CACHE_EN = 1'b1;
+
+    reg [22:0] c_tag [0:5][0:1];
+    reg [15:0] c_dat [0:5][0:1];
+    reg  [1:0] c_vld [0:5];
+    reg        c_lru [0:5];
+    integer    ci;
+
+    wire [22:0] pick_wa = cli_byte[23:1];
+    wire c_h0  = CACHE_EN && c_vld[pick][0] && (c_tag[pick][0] == pick_wa);
+    wire c_h1  = CACHE_EN && c_vld[pick][1] && (c_tag[pick][1] == pick_wa);
+    wire c_hit = pick_v && (c_h0 || c_h1);
+    wire [15:0] c_word = c_h0 ? c_dat[pick][0] : c_dat[pick][1];
+
     reg  [26:1] sd_addr;
     reg  [15:0] sd_din;
     reg   [1:0] sd_bs;
@@ -264,6 +307,14 @@ module upl_rom
 
     assign ioctl_wait = sd_busy || (ioctl_wr && in_sdram);
 
+    // A hit needs no SDRAM cycle, so it may be served while a read is in flight for
+    // another client -- that is where the reclaimed bandwidth actually comes from.
+    // rd_q and ack_r are shared, so only ONE ack may fire per cycle and a real
+    // completion always wins; the hit simply waits for the next free cycle.
+    wire sd_complete = sd_busy && sd_ready && !sd_rd && !sd_wr;
+    wire comp_ack    = (sd_complete && sd_was_rd && (rd_mode != RD_LATE)) || rd_pend;
+    wire serve_hit   = c_hit && !comp_ack && !ack_r[pick] && !ioctl_download;
+
     always_ff @(posedge clk) begin
         // por_reset ONLY - a reset that includes ioctl_download would hold this
         // FSM idle for the whole transfer and not one byte would land.
@@ -272,6 +323,10 @@ module upl_rom
             sd_refresh_cnt <= 9'd0; sd_old_ready <= 1'b1; wr_pend <= 1'b0; ack_r <= 6'd0;
             rd_pend <= 1'b0;
             rr <= 3'd0;
+            for (ci = 0; ci < 6; ci = ci + 1) begin
+                c_vld[ci] <= 2'd0;
+                c_lru[ci] <= 1'b0;
+            end
         end else begin
             // AUTO_REFRESH: 8192 rows / 64 ms = one every 7.8125 us = 468 cycles
             // at 60 MHz. Toggled unconditionally and OUTSIDE the arbiter - the
@@ -311,6 +366,10 @@ module upl_rom
                         end else begin
                             rd_q       <= sd_lsb ? sd_dout_sel[15:8] : sd_dout_sel[7:0];
                             ack_r[cur] <= 1'b1;
+                            c_tag[cur][c_lru[cur]] <= sd_addr[23:1];
+                            c_dat[cur][c_lru[cur]] <= sd_dout_sel;
+                            c_vld[cur][c_lru[cur]] <= 1'b1;
+                            c_lru[cur]             <= ~c_lru[cur];
                         end
                     end
                     sd_busy <= 0;
@@ -328,7 +387,7 @@ module upl_rom
                     wr_pend  <= (ioctl_wr && in_sdram);
                 // DIAG-REVERT-2026-08-30: original below, uncomment to restore
                 // end else if (pick_v && !ioctl_download && !rd_pend) begin
-                end else if (pick_v && !ioctl_download && !rd_pend && !ack_r[pick]) begin  // DIAG: one-fetch-stale fix
+                end else if (pick_v && !ioctl_download && !rd_pend && !ack_r[pick] && !c_hit) begin  // DIAG: one-fetch-stale fix
                     sd_addr   <= {3'd0, cli_byte[23:1]};
                     sd_lsb    <= cli_byte[0];
                     cur       <= pick;
@@ -342,7 +401,23 @@ module upl_rom
                 rd_q          <= rd_lsbp ? sd_dout[15:8] : sd_dout[7:0];
                 ack_r[rd_cur] <= 1'b1;
                 rd_pend       <= 1'b0;
+                c_tag[rd_cur][c_lru[rd_cur]] <= sd_addr[23:1];
+                c_dat[rd_cur][c_lru[rd_cur]] <= sd_dout;
+                c_vld[rd_cur][c_lru[rd_cur]] <= 1'b1;
+                c_lru[rd_cur]                <= ~c_lru[rd_cur];
             end
+
+            // Cache hit: ack straight away, no SDRAM access. Rotate the pointer the
+            // same way a real service does so one client cannot monopolise the port.
+            if (serve_hit) begin
+                rd_q        <= cli_byte[0] ? c_word[15:8] : c_word[7:0];
+                ack_r[pick] <= 1'b1;
+                rr          <= (pick == 3'd5) ? 3'd0 : (pick + 3'd1);
+            end
+
+            // ROM never changes underneath us, so a download is the only invalidation.
+            if (ioctl_download)
+                for (ci = 0; ci < 6; ci = ci + 1) c_vld[ci] <= 2'd0;
         end
     end
 
