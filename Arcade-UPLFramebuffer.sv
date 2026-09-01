@@ -91,8 +91,6 @@ localparam CONF_STR = {
 	"OO,Tile ROM Viewer,Off,On;",
 	"OST,BG Debug,Off,Swatch,TileROM,VRAMCol;",
 	"OU,Sprite Layer,On,Off;",
-	"OL,Snd Diag Square,Off,On;",
-	"ON,Snd Diag YM Tone,Off,On;",
 	"-;",
 	"DIP;",
 	"-;",
@@ -376,8 +374,6 @@ UPLFramebuffer uplframebuffer_inst
 	.diag_tileview(status[24]),    // DIAG-REVERT-2026-08-30
 	.diag_bgmode(status[29:28]),   // DIAG-REVERT-2026-08-30
 	.diag_sproff(status[30]),      // DIAG-REVERT-2026-08-30
-	.diag_tone(status[21]),        // DIAG-REVERT-2026-08-31
-	.diag_ym(status[23]),          // DIAG-REVERT-2026-08-31
 
 	.SDRAM_DQ(SDRAM_DQ), .SDRAM_A(SDRAM_A), .SDRAM_DQML(SDRAM_DQML), .SDRAM_DQMH(SDRAM_DQMH),
 	.SDRAM_BA(SDRAM_BA), .SDRAM_nCS(SDRAM_nCS), .SDRAM_nWE(SDRAM_nWE), .SDRAM_nRAS(SDRAM_nRAS),

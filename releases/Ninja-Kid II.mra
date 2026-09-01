@@ -52,6 +52,14 @@
         <part name="6.3h" crc="d3a18a79"/>
     </rom>
 
+    <!-- Index 12: MC8123 key. The encrypted range is only 0000-7FFF, so the key
+         index's top bit is always 0 and just two 2K halves are ever read -- load the
+         opcode table then the data table, packed back to back (4K total). -->
+    <rom index="12" md5="none" zip="ninjakd2.zip">
+        <part name="ninjakd2.key" crc="ec25318f" offset="0x0000" length="0x800"/>
+        <part name="ninjakd2.key" crc="ec25318f" offset="0x1000" length="0x800"/>
+    </rom>
+
     <!-- Index 2: FG char ROM -->
     <rom index="2" md5="none" zip="ninjakd2.zip">
         <part name="12.5n" crc="db5657a9"/>

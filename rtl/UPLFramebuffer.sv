@@ -50,8 +50,6 @@ module UPLFramebuffer
     input                diag_tileview,
     input          [1:0] diag_bgmode,    // 0 Off 1 Swatch 2 TileROM 3 VRAMCol
     input                diag_sproff,    // 1 = drop the sprite layer out of the mix
-    input                diag_tone,      // DIAG-REVERT-2026-08-31: square wave at the mixer
-    input                diag_ym,        // DIAG-REVERT-2026-08-31: SSG tone into YM2203 #1
 
     // ---- SDRAM
     inout  [15:0] SDRAM_DQ,
@@ -270,8 +268,7 @@ UPLFramebuffer_SND snd_board
     .pcm_cmd(pcm_cmd),
     .pcm_cmd_wr(pcm_cmd_wr),
 
-    .sound_out(snd_mono),
-    .diag_tone(diag_tone), .diag_ym(diag_ym)   // DIAG-REVERT-2026-08-31
+    .sound_out(snd_mono)
 );
 
 // Mono board - one SPEAKER (ninjakd2.cpp:1575)

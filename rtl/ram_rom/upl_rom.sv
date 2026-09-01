@@ -75,7 +75,7 @@ module upl_rom
     localparam [7:0] IDX_MAIN = 8'd0,  IDX_SND  = 8'd1,  IDX_CHAR = 8'd2,
                      IDX_SET  = 8'd5,  IDX_SPR  = 8'd6,  IDX_TIL1 = 8'd7,
                      IDX_TIL2 = 8'd8,  IDX_TIL3 = 8'd9,  IDX_PCM  = 8'd10,
-                     IDX_PROM = 8'd11;
+                     IDX_PROM = 8'd11, IDX_KEY  = 8'd12;
 
     // SDRAM region bases (byte addresses)
     localparam [23:0] SDR_CHAR = 24'h000000,   // 32K
@@ -114,6 +114,12 @@ module upl_rom
     // ninjakd2a / ninjakd2b ship a pre-decrypted opcode half; every other set
     // runs opcodes and data from the same image.
     wire use_opcodes = (set_id == 8'h01) || (set_id == 8'h02);
+
+    // MC8123 sets. They never use the pre-decrypted opcode ROM (that is the 01/02
+    // bootlegs only), so rom_snd_opcodes is free to hold the key instead -- which is
+    // what makes this cost ZERO extra block RAM.
+    wire mc8123 = (set_id == 8'h00) || (set_id == 8'h03)
+               || (set_id == 8'h04) || (set_id == 8'h05);
 
     //-------------------------------------------------------------------------
     // Main CPU ROM — BRAM. Stream is 0x0000-0x7FFF fixed then the bank window,
@@ -176,18 +182,48 @@ module upl_rom
 
     wire [7:0] sc_data_q = audiocpu_addr[15] ? sc_hi_q : sc_lo_q;
 
+    // MC8123 key table index: bitswap<12>(addr,15,14,13,12,11,10,8,6,4,2,1,0), with
+    // bit 11 = addr[15]. Only 0x0000-0x7FFF is encrypted, so that bit is always 0 and
+    // just 2K of each table is live -- the MRA hands us the two used halves packed
+    // back to back, opcode table then data table, 4K total.
+    wire [10:0] tbl_num = {audiocpu_addr[14], audiocpu_addr[13], audiocpu_addr[12],
+                           audiocpu_addr[11], audiocpu_addr[10], audiocpu_addr[8],
+                           audiocpu_addr[6],  audiocpu_addr[4],  audiocpu_addr[2],
+                           audiocpu_addr[1],  audiocpu_addr[0]};
+
+    wire [14:0] sc_op_addr = mc8123 ? {3'd0, ~audiocpu_m1, tbl_num} : audiocpu_addr[14:0];
+    wire        key_wr     = ioctl_wr && (ioctl_index == IDX_KEY);
+
     dpram_dc #(.widthad_a(15), .width_a(8)) rom_snd_opcodes
     (
-        .clock_a(clk), .address_a(audiocpu_addr[14:0]),
+        .clock_a(clk), .address_a(sc_op_addr),
         .data_a(8'd0), .wren_a(1'b0), .q_a(sc_op_q),
         // Opcodes occupy only 0x10000-0x17FFF. The region is 0x20000 and the MRA
         // fills all of it, so bit 15 must gate the write or 0x18000+ aliases back
         // onto 0x0000 and overwrites the opcodes with the data half.
-        .clock_b(clk), .address_b(sc_off[14:0]),
-        .data_b(ioctl_data), .wren_b(sc_wr && sc_is_op && !sc_off[15]), .q_b()
+        // On MC8123 sets this same RAM holds the 4K key instead.
+        .clock_b(clk),
+        .address_b(key_wr ? {3'd0, ioctl_addr[11:0]} : sc_off[14:0]),
+        .data_b(ioctl_data),
+        .wren_b(key_wr || (sc_wr && sc_is_op && !sc_off[15])), .q_b()
     );
 
-    assign audiocpu_data = (use_opcodes && audiocpu_m1 && !audiocpu_addr[15])
+    // In-flight decrypt. m1 is stable for the whole Z80 cycle (~12 fabric clocks at
+    // cen_snd), so the same value addresses the key and selects the table here.
+    wire [7:0] sc_dec;
+
+    UPLFramebuffer_MC8123 mc8123_dec
+    (
+        .val   (sc_data_q),
+        .key   (sc_op_q),
+        .opcode(audiocpu_m1),
+        .dec   (sc_dec)
+    );
+
+    // 0x8000-0xBFFF is NOT encrypted (MAME decodes only the first 0x8000), so it
+    // passes through untouched.
+    assign audiocpu_data = mc8123 ? (audiocpu_addr[15] ? sc_data_q : sc_dec)
+                         : (use_opcodes && audiocpu_m1 && !audiocpu_addr[15])
                            ? sc_op_q : sc_data_q;
 
     //-------------------------------------------------------------------------

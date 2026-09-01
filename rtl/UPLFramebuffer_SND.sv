@@ -26,9 +26,6 @@ module UPLFramebuffer_SND
     output        [7:0]  pcm_cmd,
     output               pcm_cmd_wr,
 
-    // DIAG-REVERT-2026-08-31: sound bring-up probes, both default OFF
-    input                diag_tone,      // square wave straight into the mixer output
-    input                diag_ym,        // SSG tone written directly into YM2203 #1
 
     output signed [15:0] sound_out
 );
@@ -130,53 +127,6 @@ module UPLFramebuffer_SND
     wire ym1_wr = ym1_sel & ~ym1_sel_d & ~reset;
     wire ym2_wr = ym2_sel & ~ym2_sel_d & ~reset;
 
-    // DIAG-REVERT-2026-08-31: SSG tone generator. Writes R7 mixer, R0/R1 tone
-    // period and R8 volume into chip 1, one register per ~17us, then stops.
-    reg [3:0] dstep = 4'd0;
-    reg [9:0] dwait = 10'd0;
-    reg       dstrobe = 1'b0;
-    reg       daddr = 1'b0;
-    reg [7:0] ddin  = 8'd0;
-    reg       ddone = 1'b0;
-
-    always_ff @(posedge clk) begin
-        dstrobe <= 1'b0;
-        if (!diag_ym) begin
-            dstep <= 4'd0; dwait <= 10'd0; ddone <= 1'b0;
-        end else if (!ddone) begin
-            if (dwait != 10'd1023) dwait <= dwait + 10'd1;
-            else begin
-                dwait <= 10'd0;
-                case (dstep)
-                    4'd0: begin daddr <= 1'b0; ddin <= 8'h07; end
-                    4'd1: begin daddr <= 1'b1; ddin <= 8'h38; end
-                    4'd2: begin daddr <= 1'b0; ddin <= 8'h00; end
-                    4'd3: begin daddr <= 1'b1; ddin <= 8'h40; end
-                    4'd4: begin daddr <= 1'b0; ddin <= 8'h01; end
-                    4'd5: begin daddr <= 1'b1; ddin <= 8'h00; end
-                    4'd6: begin daddr <= 1'b0; ddin <= 8'h08; end
-                    default: begin daddr <= 1'b1; ddin <= 8'h0F; end
-                endcase
-                dstrobe <= 1'b1;
-                if (dstep == 4'd7) ddone <= 1'b1;
-                else dstep <= dstep + 4'd1;
-            end
-        end
-    end
-
-    wire       ym1_wr_eff = diag_ym ? dstrobe : ym1_wr;
-    wire       ym1_addr   = diag_ym ? daddr   : A[0];
-    wire [7:0] ym1_din    = diag_ym ? ddin    : cpu_dout;
-
-    // DIAG-REVERT-2026-08-31: ~440 Hz square, bypasses jt03 entirely.
-    reg [16:0] tone_div = 17'd0;
-    reg        tone_ph  = 1'b0;
-    always_ff @(posedge clk) begin
-        if (tone_div == 17'd68181) begin tone_div <= 17'd0; tone_ph <= ~tone_ph; end
-        else tone_div <= tone_div + 17'd1;
-    end
-    wire signed [15:0] diag_wave = tone_ph ? 16'sd8000 : -16'sd8000;
-
     wire [7:0] ym1_dout, ym2_dout;
     wire       ym1_irq_n;
     wire signed [15:0] ym1_snd, ym2_snd;
@@ -186,11 +136,10 @@ module UPLFramebuffer_SND
         .rst    (reset),
         .clk    (clk),
         .cen    (cen_ym),
-        // DIAG-REVERT-2026-08-31: originals were cpu_dout / A[0] / ~ym1_wr / ~ym1_wr
-        .din    (ym1_din),
-        .addr   (ym1_addr),
-        .cs_n   (~ym1_wr_eff),
-        .wr_n   (~ym1_wr_eff),
+        .din    (cpu_dout),
+        .addr   (A[0]),
+        .cs_n   (~ym1_wr),
+        .wr_n   (~ym1_wr),
         .dout   (ym1_dout),
         .irq_n  (ym1_irq_n),
         .IOA_in (8'hFF),
@@ -231,9 +180,7 @@ module UPLFramebuffer_SND
 
     wire signed [16:0] snd_sum = {ym1_snd[15], ym1_snd} + {ym2_snd[15], ym2_snd};
 
-    // DIAG-REVERT-2026-08-31: original below, uncomment to restore
-    // assign sound_out = pause ? 16'sd0 : snd_sum[16:1];
-    assign sound_out = pause ? 16'sd0 : (diag_tone ? diag_wave : snd_sum[16:1]);
+    assign sound_out = pause ? 16'sd0 : snd_sum[16:1];
 
     ////////////////////////////////////////////////////////////////////////
     // CPU read mux + Z80. MAME maps the YM ports write-only, but the sound
