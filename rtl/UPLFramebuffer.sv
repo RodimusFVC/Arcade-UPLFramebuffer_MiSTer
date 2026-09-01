@@ -177,6 +177,12 @@ UPLFramebuffer_MAIN main_board
 // mnight/mnightj/arkarea use an 11-bit bg tile index (ninjakd2.cpp:1047 family).
 wire bg_mnight  = (set_id >= 8'h06) && (set_id <= 8'h08);
 wire is_robokid = (set_id >= 8'h09) && (set_id <= 8'h0C);
+wire is_omegaf  = (set_id >= 8'h0D) && (set_id <= 8'h0F);
+
+// omegaf's machine_config is robokid()'s plus overrides, so it inherits gfx_robokid
+// wholesale: palette bases fg 0x300 / spr 0x200, col-aligned 2x2 sub-tiles, 5-bit RGB.
+// Its sprite stencil is the one thing that differs, so that stays separate.
+wire gfx_robokid = is_robokid | is_omegaf;
 
 UPLFramebuffer_VIDEO video
 (
@@ -186,7 +192,7 @@ UPLFramebuffer_VIDEO video
 
     .flip_screen(flip_screen),
     .bg_mnight(bg_mnight),
-    .is_robokid(is_robokid),
+    .gfx_robokid(gfx_robokid),
     .DIAG_TILEVIEW(diag_tileview),   // DIAG-REVERT-2026-08-30
     .DIAG_BGMODE(diag_bgmode),       // DIAG-REVERT-2026-08-30
     .DIAG_SPROFF(diag_sproff),       // DIAG-REVERT-2026-08-30
@@ -213,7 +219,8 @@ UPLFramebuffer_SPRITE sprites
     .reset(reset),
 
     .flip_screen(flip_screen),
-    .is_robokid(is_robokid),
+    .gfx_robokid(gfx_robokid),
+    .is_omegaf(is_omegaf),
     .overdraw(sprite_overdraw),
     .draw_window(spr_draw_window),
 

@@ -16,7 +16,7 @@ module UPLFramebuffer_VIDEO
 
     input               flip_screen,
     input               bg_mnight,       // mnight/arkarea bg tile decode (11-bit index)
-    input               is_robokid,      // robokid palette bases, gfx col order, 5-bit RGB
+    input               gfx_robokid,      // robokid palette bases, gfx col order, 5-bit RGB
 
     // DIAG-REVERT-2026-08-30: 1 = ignore fg_videoram and the palette, draw char
     // tiles 0.. in order as greyscale. The screen becomes the gfx ROM itself.
@@ -299,8 +299,8 @@ module UPLFramebuffer_VIDEO
     // Fetch index j is tx[3:1], so j ascending walks tx 0..15 left to right.
     // row_2x2 is 0 1 / 2 3, col_2x2 (robokid) is 0 2 / 1 3 -- the two sub-tile
     // select bits swap (emu/video/generic.cpp:145,175).
-    wire bg_sub_hi = is_robokid ? bj[2]    : bg_ty[3];
-    wire bg_sub_lo = is_robokid ? bg_ty[3] : bj[2];
+    wire bg_sub_hi = gfx_robokid ? bj[2]    : bg_ty[3];
+    wire bg_sub_lo = gfx_robokid ? bg_ty[3] : bj[2];
     wire [18:0] bg_rom_addr = {1'b0, bg_tile, bg_sub_hi, bg_sub_lo, bg_ty[2:0], bj[1:0]};
 
     always_ff @(posedge clk) begin
@@ -406,11 +406,11 @@ module UPLFramebuffer_VIDEO
     // are pen 0, come out transparent -- the tan/black swap seen on hardware.
     wire fg_opaque = (pix != 4'hF);
 
-    // GFXDECODE bases: ninjakd2 fg 0x200 / spr 0x100, robokid fg 0x300 / spr 0x200.
+    // GFXDECODE bases: ninjakd2 fg 0x200 / spr 0x100, gfx_robokid fg 0x300 / spr 0x200.
     // Both put bg at 0x000. Reading robokid's sprites at 0x100 hits a range it never
     // writes, so they come out black.
-    assign pal_index = fg_opaque   ? {is_robokid ? 2'b11 : 2'b10, color, pix}
-                     : spr_opaque  ? {is_robokid ? 2'b10 : 2'b01, fb_rdata}
+    assign pal_index = fg_opaque   ? {gfx_robokid ? 2'b11 : 2'b10, color, pix}
+                     : spr_opaque  ? {gfx_robokid ? 2'b10 : 2'b01, fb_rdata}
                      : bg_show     ? bg_index
                                    : 10'd0;
 
@@ -454,8 +454,8 @@ module UPLFramebuffer_VIDEO
     wire [4:0] g5 = {rgb_lat[11:8],  rgb_lat[2]};
     wire [4:0] b5 = {rgb_lat[7:4],   rgb_lat[1]};
 
-    assign R = !visible ? 8'd0 : is_robokid ? {r5, r5[4:2]} : {rgb_lat[15:12], rgb_lat[15:12]};
-    assign G = !visible ? 8'd0 : is_robokid ? {g5, g5[4:2]} : {rgb_lat[11:8],  rgb_lat[11:8]};
-    assign B = !visible ? 8'd0 : is_robokid ? {b5, b5[4:2]} : {rgb_lat[7:4],   rgb_lat[7:4]};
+    assign R = !visible ? 8'd0 : gfx_robokid ? {r5, r5[4:2]} : {rgb_lat[15:12], rgb_lat[15:12]};
+    assign G = !visible ? 8'd0 : gfx_robokid ? {g5, g5[4:2]} : {rgb_lat[11:8],  rgb_lat[11:8]};
+    assign B = !visible ? 8'd0 : gfx_robokid ? {b5, b5[4:2]} : {rgb_lat[7:4],   rgb_lat[7:4]};
 
 endmodule

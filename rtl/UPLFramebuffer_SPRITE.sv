@@ -14,7 +14,7 @@
 //    draw_sprites()   — exactly 96 16x16 sprites per frame, a big (32x32) sprite
 //                       counting as 4, a disabled sprite still counting as 1
 //    erase_sprites()  — clear to 0xf, or with overdraw only where the stencil hits
-//    stencil_ninjakd2 — (pal & 0xf0) == 0xf0, i.e. colour code 15 does not persist
+//    stencil_*        — ninjakd2 (pal&0xf0)==0xf0, robokid <0xe0, omegaf always true
 //
 //  The framebuffer stores {colour[3:0], pen[3:0]}; the video side adds the 0x100
 //  sprite palette base. pen 0xf is the transparent/empty marker, and transpen never
@@ -28,7 +28,8 @@ module UPLFramebuffer_SPRITE
     input               reset,
 
     input               flip_screen,
-    input               is_robokid,      // col-aligned gfx, swapped big-sprite quadrants, own stencil
+    input               gfx_robokid,      // col-aligned gfx, swapped big-sprite quadrants, own stencil
+    input               is_omegaf,        // stencil is unconditional -- overdraw clears everything
     input               overdraw,        // c203 bit0
     input               draw_window,     // high through the vblank rendering window
 
@@ -74,10 +75,11 @@ module UPLFramebuffer_SPRITE
     // Overdraw stencil, evaluated per byte lane on the stored colour nibble.
     //   ninjakd2 / mnight / arkarea : (pal & 0xf0) == 0xf0  -> only colour 15 clears
     //   robokid                     : (pal & 0xf0) <  0xe0  -> 14 and 15 persist
-    wire st0 = is_robokid ? (fb_bq[ 7: 4] < 4'hE) : (fb_bq[ 7: 4] == 4'hF);
-    wire st1 = is_robokid ? (fb_bq[15:12] < 4'hE) : (fb_bq[15:12] == 4'hF);
-    wire st2 = is_robokid ? (fb_bq[23:20] < 4'hE) : (fb_bq[23:20] == 4'hF);
-    wire st3 = is_robokid ? (fb_bq[31:28] < 4'hE) : (fb_bq[31:28] == 4'hF);
+    //   omegaf                      : always true            -> nothing persists
+    wire st0 = is_omegaf ? 1'b1 : gfx_robokid ? (fb_bq[ 7: 4] < 4'hE) : (fb_bq[ 7: 4] == 4'hF);
+    wire st1 = is_omegaf ? 1'b1 : gfx_robokid ? (fb_bq[15:12] < 4'hE) : (fb_bq[15:12] == 4'hF);
+    wire st2 = is_omegaf ? 1'b1 : gfx_robokid ? (fb_bq[23:20] < 4'hE) : (fb_bq[23:20] == 4'hF);
+    wire st3 = is_omegaf ? 1'b1 : gfx_robokid ? (fb_bq[31:28] < 4'hE) : (fb_bq[31:28] == 4'hF);
 
     // the byte select must lag the address by the BRAM's one clock
     reg [1:0] fb_rsel;
@@ -135,8 +137,8 @@ module UPLFramebuffer_SPRITE
     // mnight/arkarea are 0x30000 = 1536 tiles and need it.
     // robokid is m_robokid_sprites: big_xshift=1 / big_yshift=0, i.e. bit1 is the
     // horizontal half and bit0 the vertical -- the opposite of the ninjakd2 family.
-    wire [1:0] flip_xor = is_robokid ? {f_flipx, f_flipy} : {f_flipy, f_flipx};
-    wire [1:0] quad_xor = is_robokid ? {qx[0], qy[0]}     : {qy[0], qx[0]};
+    wire [1:0] flip_xor = gfx_robokid ? {f_flipx, f_flipy} : {f_flipy, f_flipx};
+    wire [1:0] quad_xor = gfx_robokid ? {qx[0], qy[0]}     : {qy[0], qx[0]};
     wire [10:0] base_code = e_big ? {e_code[10:2], 2'b00} ^ {9'd0, flip_xor}
                                   :  e_code;
     wire [10:0] cur_code  = base_code ^ {9'd0, quad_xor};
@@ -163,8 +165,8 @@ module UPLFramebuffer_SPRITE
 
     // 1024 tiles x 128 bytes = 0x20000, so the region address is 17 bits
     // row_2x2 is 0 1 / 2 3, col_2x2 (robokid) is 0 2 / 1 3 -- the sub-tile bits swap.
-    wire sub_hi = is_robokid ? rj[2] : ty[3];
-    wire sub_lo = is_robokid ? ty[3] : rj[2];
+    wire sub_hi = gfx_robokid ? rj[2] : ty[3];
+    wire sub_lo = gfx_robokid ? ty[3] : rj[2];
     wire [17:0] rom_addr = {cur_code, sub_hi, sub_lo, ty[2:0], rj[1:0]};
 
     wire [5:0] pshift = {2'd0, ~tx} << 2;

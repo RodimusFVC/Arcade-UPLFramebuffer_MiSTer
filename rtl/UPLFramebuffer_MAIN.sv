@@ -54,6 +54,7 @@ module UPLFramebuffer_MAIN
     wire        mreq_n, iorq_n, rd_n, wr_n, m1_n;
 
     wire mem_wr = ~mreq_n & ~wr_n;
+    wire mem_rd = ~mreq_n & ~rd_n;
     wire int_ack = ~m1_n & ~iorq_n;
 
     //-------------------------------------------------------------------------
@@ -64,25 +65,29 @@ module UPLFramebuffer_MAIN
     //-------------------------------------------------------------------------
     wire is_mnight  = (set_id >= 8'h06) && (set_id <= 8'h08);  // mnight/mnightj/arkarea
     wire is_robokid = (set_id >= 8'h09) && (set_id <= 8'h0C);  // robokid + 3 japan sets
+    wire is_omegaf  = (set_id >= 8'h0D) && (set_id <= 8'h0F);  // omegaf/omegafa/omegafs
 
     wire cs_rom   = (A[15] == 1'b0);                       // 0000-7FFF fixed
     wire cs_bank  = (A[15:14] == 2'b10);                   // 8000-BFFF banked
 
     // robokid reads inputs and writes control at the SAME addresses (DC00-DC04);
     // cs_in only feeds the read mux and cs_ctrl only gates writes, so both assert.
-    wire cs_in    = is_robokid ? ((A[15:8] == 8'hDC) && (A[7:0] < 8'd5))   // DC00-DC04
+    wire cs_in    = is_omegaf  ? ((A[15:8] == 8'hC0) && (A[7:0] == 8'd0))   // C000 only
+                  : is_robokid ? ((A[15:8] == 8'hDC) && (A[7:0] < 8'd5))   // DC00-DC04
                   : is_mnight  ? ((A[15:8] == 8'hF8) && (A[7:0] < 8'd5))   // F800-F804
                                : ((A[15:8] == 8'hC0) && (A[7:0] < 8'd5));  // C000-C004
-    wire cs_ctrl  = is_robokid ? (A[15:8] == 8'hDC)                        // DC00-DC03
+    wire cs_ctrl  = is_omegaf  ? ((A[15:8] == 8'hC0) && (A[7:0] <= 8'h06))  // C000-C006
+                  : is_robokid ? (A[15:8] == 8'hDC)                        // DC00-DC03
                   : is_mnight  ? (A[15:8] == 8'hFA)                        // FA00-FA0C
                                : (A[15:8] == 8'hC2);                       // C200-C20C
-    wire cs_pal   = is_robokid ? ((A >= 16'hC000) && (A < 16'hC800))       // C000-C7FF
+    wire cs_pal   = is_omegaf  ? (A[15:11] == 5'b11011)                    // D800-DFFF (0x400 entries)
+                  : is_robokid ? ((A >= 16'hC000) && (A < 16'hC800))       // C000-C7FF
                   : is_mnight  ? ((A >= 16'hF000) && (A < 16'hF600))       // F000-F5FF
                                : ((A >= 16'hC800) && (A < 16'hCE00));      // C800-CDFF
     wire cs_fg    = is_robokid ? (A[15:11] == 5'b11001)                    // C800-CFFF
                   : is_mnight  ? (A[15:11] == 5'b11101)                    // E800-EFFF
                                : (A[15:11] == 5'b11010);                   // D000-D7FF
-    wire cs_bg    = is_robokid ? 1'b0                                      // banked, see cs_bgb
+    wire cs_bg    = (is_robokid || is_omegaf) ? 1'b0                       // banked, see cs_bgb
                   : is_mnight  ? (A[15:11] == 5'b11100)                    // E000-E7FF
                                : (A[15:11] == 5'b11011);                   // D800-DFFF
     wire cs_work  = is_mnight  ? (A[15:13] == 3'b110)                      // C000-DFFF
@@ -91,11 +96,21 @@ module UPLFramebuffer_MAIN
     // robokid's three banked bg VRAM windows, D000-D3FF / D400-D7FF / D800-DBFF.
     // Storage only -- nothing renders these yet, but the CPU must read back what it
     // wrote or the boot test fails. 0x800 per layer, one bank bit (video_init_banked(0x800)).
-    wire cs_bgb   = is_robokid && (A[15:12] == 4'hD) && (A[11:10] != 2'b11);
+    wire cs_bgb   = (is_robokid && (A[15:12] == 4'hD) && (A[11:10] != 2'b11))
+                  || (is_omegaf  && (A[15:12] == 4'hC) && (A[11:10] != 2'b00));  // C400-CFFF
 
     // robokid bg control: DD00-DD05 layer0, DE00-DE05 layer1, DF00-DF05 layer2.
     // Only the +05 bank register is implemented; scroll/enable are ignored for now.
-    wire cs_bgctl = is_robokid && (A[15:10] == 6'b110111) && (A[9:8] != 2'b00);
+    // omegaf: C100-C105 layer0, C200-C205 layer1, C300-C305 layer2. A[9:8] encodes the
+    // layer exactly as robokid's DD/DE/DF does, so the bank-write case below is shared.
+    wire cs_bgctl = (is_robokid && (A[15:10] == 6'b110111) && (A[9:8] != 2'b00))
+                  || (is_omegaf  && (A[15:12] == 4'hC) && (A[11:10] == 2'b00)
+                                 && (A[9:8] != 2'b00) && (A[7:0] <= 8'h05));
+
+    // omegaf reads its DIPs and both pads through the I/O protection device at
+    // C001-C003. C1E7 (unk_r) must read 0xFF or small enemies never fire; it is not
+    // decoded anywhere, so the read mux default already returns that.
+    wire cs_prot = is_omegaf && (A[15:8] == 8'hC0) && (A[7:0] >= 8'd1) && (A[7:0] <= 8'd3);
 
     assign maincpu_addr = A;
 
@@ -115,6 +130,11 @@ module UPLFramebuffer_MAIN
     reg  [7:0] latch_reg   = 8'd0;
     reg        latch_wr    = 1'b0;
     reg  [2:0] bgbank      = 3'd0;   // robokid: one bank bit per bg layer
+    reg  [7:0] prot0       = 8'd0;   // omegaf io_protection[0..2], written at C004-C006
+    reg  [7:0] prot1       = 8'd0;
+    reg  [7:0] prot2       = 8'd0;
+    reg  [7:0] prot_in     = 8'd0;   // io_protection_input
+    reg        prot_tick   = 1'b0;   // only bit0 of MAME's tick counter is ever tested
 
     // robokid/omegaf have a 0x50000 main ROM region (16 banks); the ninjakd2,
     // mnight and arkarea boards have 0x30000 (8 banks). MAME derives the mask
@@ -128,6 +148,7 @@ module UPLFramebuffer_MAIN
         if (reset) begin
             bank_reg <= 4'd0; flip_reg <= 1'b0; sndrst_reg <= 1'b0;
             overdraw <= 1'b0; bgen <= 1'b1; bgbank <= 3'd0;
+            prot0 <= 8'd0; prot1 <= 8'd0; prot2 <= 8'd0; prot_in <= 8'd0;
         end else if (cen_cpu && mem_wr && cs_bgctl && (A[7:0] == 8'h05)) begin
             case (A[9:8])                            // DD05/DE05/DF05 -> layer 0/1/2
                 2'd1: bgbank[0] <= cpu_dout[0];
@@ -140,6 +161,14 @@ module UPLFramebuffer_MAIN
                 8'h01: begin sndrst_reg <= cpu_dout[4]; flip_reg <= cpu_dout[7]; end
                 8'h02: bank_reg <= cpu_dout[3:0] & bank_mask;
                 8'h03: overdraw <= cpu_dout[0];
+                // omegaf only: C004-C006 are the protection device. The other sets do
+                // not write these offsets, and prot* is read back only when is_omegaf.
+                8'h04: prot0 <= cpu_dout;
+                8'h05: prot1 <= cpu_dout;
+                8'h06: begin
+                    if (cpu_dout[0] && !prot2[0]) prot_in <= prot0;   // load on bit0 rise
+                    prot2 <= cpu_dout;
+                end
                 8'h08: scrollx[7:0]  <= cpu_dout;
                 8'h09: scrollx[15:8] <= cpu_dout;
                 8'h0A: scrolly[7:0]  <= cpu_dout;
@@ -147,6 +176,50 @@ module UPLFramebuffer_MAIN
                 8'h0C: bgen <= cpu_dout[0];
                 default: ;
             endcase
+        end
+    end
+
+    //-------------------------------------------------------------------------
+    // omegaf I/O protection read model (ninjakd2.cpp:866). Mode lives in the low two
+    // bits of the C005 register; C001-C003 are offsets 0-2.
+    //-------------------------------------------------------------------------
+    wire [1:0] prot_mode = prot1[1:0];
+    wire [1:0] prot_off  = A[1:0] - 2'd1;          // C001-C003 -> 0,1,2
+
+    reg [7:0] prot_dout;
+    always_comb begin
+        prot_dout = 8'hFF;
+        case (prot_mode)
+            2'd0: if (prot_off == 2'd1)
+                      case (prot0[7:5])
+                          3'b000: prot_dout = prot_tick ? 8'h00
+                                            : (prot_in == 8'h00) ? 8'h82
+                                            : (prot_in == 8'h8C) ? 8'h9F
+                                            : (prot_in == 8'h89) ? 8'h8B : 8'hFF;
+                          3'b001: prot_dout = 8'hC7;
+                          3'b011: prot_dout = 8'h00;
+                          3'b100: prot_dout = {3'b001, prot_in[4:0]};
+                          3'b110: prot_dout = {3'b011, prot_in[4:0]};
+                          default: ;
+                      endcase
+            2'd1: prot_dout = (prot_off == 2'd0) ? dsw1 : (prot_off == 2'd1) ? dsw2 : 8'h02;
+            2'd2: prot_dout = (prot_off == 2'd0) ? pad1 : (prot_off == 2'd1) ? pad2 : 8'h01;
+            default: ;
+        endcase
+    end
+
+    // MAME increments the tick on every such read and tests the POST-increment value,
+    // so toggle on the leading edge and let the mux read it back the same cycle.
+    wire prot_tick_cond = cs_prot & mem_rd & (prot_mode == 2'd0)
+                        & (prot_off == 2'd1) & (prot0[7:5] == 3'b000);
+    reg  prot_tick_d;
+
+    always_ff @(posedge clk) begin
+        if (reset) begin
+            prot_tick <= 1'b0; prot_tick_d <= 1'b0;
+        end else begin
+            prot_tick_d <= prot_tick_cond;
+            if (prot_tick_cond && !prot_tick_d) prot_tick <= ~prot_tick;
         end
     end
 
@@ -158,7 +231,9 @@ module UPLFramebuffer_MAIN
     assign sprite_overdraw = overdraw;
     assign bg_scrollx      = scrollx;
     assign bg_scrolly      = scrolly;
-    assign bg_enable       = bgen;
+    // omegaf's three banked bg layers are not rendered yet, so hold the layer off
+    // rather than let it paint tile 0 of tiles1 over the screen.
+    assign bg_enable       = bgen & ~is_omegaf;
 
     //-------------------------------------------------------------------------
     // Palette RAM — 0x300 entries x 16 bit, big-endian bytes (RGBx_444).
@@ -198,11 +273,13 @@ module UPLFramebuffer_MAIN
         .clock_b(clk), .address_b(bg_vram_addr), .data_b(8'd0), .wren_b(1'b0), .q_b(bg_vram_data)
     );
 
-    // D000->layer2, D400->layer1, D800->layer0 (window order is reversed vs the
-    // DD/DE/DF control order), so pick the bank register accordingly.
-    wire [1:0]  bgb_win  = A[11:10];
-    wire        bgb_sel  = (bgb_win == 2'd0) ? bgbank[2]
-                         : (bgb_win == 2'd1) ? bgbank[1] : bgbank[0];
+    // robokid: D000->layer2, D400->layer1, D800->layer0 (window order is reversed vs
+    // the DD/DE/DF control order). omegaf: C400->layer0, C800->layer1, CC00->layer2.
+    wire [1:0]  bgb_win  = is_omegaf ? (A[11:10] - 2'd1) : A[11:10];
+    wire        bgb_sel  = is_omegaf ? ((A[11:10] == 2'd1) ? bgbank[0] :
+                                        (A[11:10] == 2'd2) ? bgbank[1] : bgbank[2])
+                                     : ((A[11:10] == 2'd0) ? bgbank[2] :
+                                        (A[11:10] == 2'd1) ? bgbank[1] : bgbank[0]);
     wire [12:0] bgb_addr = {bgb_win, bgb_sel, A[9:0]};
     wire  [7:0] bgb_q_a;
 
@@ -247,6 +324,7 @@ module UPLFramebuffer_MAIN
                                      (A[2:0] == 3'd1) ? pad1    :
                                      (A[2:0] == 3'd2) ? pad2    :
                                      (A[2:0] == 3'd3) ? dsw1    : dsw2;
+        else if (cs_prot)  cpu_din = prot_dout;
         else if (cs_pal)   cpu_din = A[0] ? pal_q_a[7:0] : pal_q_a[15:8];
         else if (cs_fg)    cpu_din = fg_q_a;
         else if (cs_bg)    cpu_din = bg_q_a;
