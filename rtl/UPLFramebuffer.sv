@@ -45,7 +45,8 @@ module UPLFramebuffer
     input                crt_flip,
     input                pause,
 
-    input          [1:0] rd_mode,        // SDRAM read latch: 0=Early 1=Normal 2=Late
+    input                rd_auto,        // 1 = use the measured SDRAM read latch
+    input          [1:0] rd_mode,        // manual override / fallback: 0=Early 1=Normal 2=Late
 
     // ---- SDRAM
     inout  [15:0] SDRAM_DQ,
@@ -99,6 +100,7 @@ upl_rom rom
 (
     .clk(clk_60m),
     .por_reset(por_reset),
+    .rd_auto(rd_auto),
     .rd_mode(rd_mode),
 
     .ioctl_download(ioctl_download),

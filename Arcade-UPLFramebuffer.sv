@@ -86,10 +86,8 @@ localparam CONF_STR = {
 	"P3,High Score Options;",
 	"P3OR,Autosave Hiscores,Off,On;",
 	"-;",
-	// Dev instrument, hidden for release. Uncomment with the .rd_mode() connection
-	// below to bring it back; status[20:19] = 0 = Early is the correct setting.
-	// "OJK,SDRAM Rd Latch,Early,Normal,Late;",
-	// "-;",
+	"OJL,SDRAM Rd Latch,Auto,Normal,Early,Late,Later;",
+	"-;",
 	"DIP;",
 	"-;",
 	"R0,Reset;",
@@ -327,6 +325,13 @@ always @(posedge CLK_60M) begin
 end
 wire [7:0] sw0 = dip_sw[0];
 
+// OSD lists Auto,Normal,Early,Late,Later; upl_rom encodes 0=Early 1=Normal 2=Late
+// 3=Later. Auto measures the latch after the ROM download, Normal is the fallback.
+wire       rd_auto = (status[21:19] == 3'd0);
+wire [1:0] rd_mode = (status[21:19] == 3'd2) ? 2'd0 :
+                     (status[21:19] == 3'd3) ? 2'd2 :
+                     (status[21:19] == 3'd4) ? 2'd3 : 2'd1;
+
 UPLFramebuffer uplframebuffer_inst
 (
 	.reset(reset),
@@ -365,7 +370,8 @@ UPLFramebuffer uplframebuffer_inst
 
 	.pause(pause_cpu),
 
-	.rd_mode(2'd0),                 // SDRAM read latch, Early. status[20:19] when the OSD entry is back
+	.rd_auto(rd_auto),
+	.rd_mode(rd_mode),
 
 	.SDRAM_DQ(SDRAM_DQ), .SDRAM_A(SDRAM_A), .SDRAM_DQML(SDRAM_DQML), .SDRAM_DQMH(SDRAM_DQMH),
 	.SDRAM_BA(SDRAM_BA), .SDRAM_nCS(SDRAM_nCS), .SDRAM_nWE(SDRAM_nWE), .SDRAM_nRAS(SDRAM_nRAS),

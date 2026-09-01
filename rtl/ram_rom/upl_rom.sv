@@ -12,8 +12,10 @@ module upl_rom
     input                clk,             // 60 MHz fabric; also clocks the SDRAM controller
     input                por_reset,       // power-on ONLY. Must never include ioctl_download.
 
-    // SDRAM read latch. sdram.sv uses BURST_LENGTH=4, so the completion cycle holds
-    // burst word 1; Early samples one cycle sooner and lands on word 0.
+    // SDRAM read latch. sdram.sv uses BURST_LENGTH=4, so which burst word the
+    // completion cycle holds depends on the board's data timing. rd_auto picks it
+    // by measurement; rd_mode is the manual override and the fallback.
+    input                rd_auto,       // 1 = use the detected latch when detection succeeded
     input          [1:0] rd_mode,       // 0 = Early, 1 = Normal, 2 = Late
 
     // ---- ROM download
@@ -299,27 +301,83 @@ module upl_rom
     // Deferred read capture for RD_LATE; cur/sd_lsb are snapshotted because the
     // arbiter may start another read next cycle.
     reg         rd_pend = 1'b0;
+    reg   [1:0] rd_cnt  = 2'd0;
     reg   [2:0] rd_cur  = 3'd0;
     reg         rd_lsbp = 1'b0;
 
     wire        sd_ready;
     wire [15:0] sd_dout;
 
-    localparam [1:0] RD_EARLY = 2'd0, RD_NORMAL = 2'd1, RD_LATE = 2'd2;
+    localparam [1:0] RD_EARLY = 2'd0, RD_NORMAL = 2'd1,
+                     RD_LATE  = 2'd2, RD_LATER  = 2'd3;
 
     // sd_dout is a register of SDRAM_DQ, so a one-deep delay gives burst word 0.
     reg [15:0] sd_dout_d1;
     always_ff @(posedge clk) sd_dout_d1 <= sd_dout;
 
-    wire [15:0] sd_dout_sel = (rd_mode == RD_EARLY) ? sd_dout_d1 : sd_dout;
+    // ---- read-latch auto-detect --------------------------------------------
+    // Downloads are single byte writes, so SDRAM contents are correct whatever the
+    // latch does. Reads burst 4 words and wrap inside the aligned 4-word block, so a
+    // board presenting data one cycle early returns word (p+1)%4 for a read of word p.
+    // One reference block whose four words are pairwise distinct therefore separates
+    // the three candidate sample points: for every phase exactly one returns the word
+    // that was written. Falls back to rd_mode if no such block is seen or a read hangs.
+    wire [23:0] dl_a = dl_base + ioctl_addr[23:0];
+    wire        dl_byte = ioctl_wr && in_sdram;
+
+    reg [63:0] dl_blk;
+    reg [22:0] blk_wa;
+    reg        blk_rdy;
+    always_ff @(posedge clk) begin
+        if (dl_byte) dl_blk <= {dl_blk[55:0], ioctl_data};
+        if (dl_byte && (dl_a[2:0] == 3'd7)) blk_wa <= {dl_a[23:3], 2'b00};
+        blk_rdy <= dl_byte && (dl_a[2:0] == 3'd7);
+    end
+
+    // dl_blk holds b0..b7 oldest-first once the 8th byte has shifted in.
+    wire [15:0] blk_w0 = {dl_blk[55:48], dl_blk[63:56]};
+    wire [15:0] blk_w1 = {dl_blk[39:32], dl_blk[47:40]};
+    wire [15:0] blk_w2 = {dl_blk[23:16], dl_blk[31:24]};
+    wire [15:0] blk_w3 = {dl_blk[ 7: 0], dl_blk[15: 8]};
+    wire blk_distinct = (blk_w0 != blk_w1) && (blk_w0 != blk_w2) && (blk_w0 != blk_w3)
+                     && (blk_w1 != blk_w2) && (blk_w1 != blk_w3) && (blk_w2 != blk_w3);
+
+    reg [22:0] ref_wa;
+    reg [15:0] ref_w [0:3];
+    reg        ref_vld;
+    always_ff @(posedge clk) begin
+        if (por_reset) ref_vld <= 1'b0;
+        else if (blk_rdy && !ref_vld && blk_distinct) begin
+            ref_wa   <= blk_wa;
+            ref_w[0] <= blk_w0; ref_w[1] <= blk_w1;
+            ref_w[2] <= blk_w2; ref_w[3] <= blk_w3;
+            ref_vld  <= 1'b1;
+        end
+    end
+
+    reg         probing, sd_probe, det_ok, dl_d;
+    reg   [1:0] prb_dly;
+    reg   [1:0] prb_ph, rd_det;
+    reg   [3:0] prb_ok;                 // {Later, Late, Normal, Early} still matching
+    reg  [15:0] prb_wd, prb_e, prb_n, prb_l;
+    reg  [15:0] prb_to;
+
+    wire [3:0] prb_ok_nxt = {prb_ok[3] && (sd_dout == prb_wd),   // completion +2
+                             prb_ok[2] && (prb_l   == prb_wd),   // completion +1
+                             prb_ok[1] && (prb_n   == prb_wd),   // completion
+                             prb_ok[0] && (prb_e   == prb_wd)};  // completion -1
+
+    wire [1:0] rd_sel = (rd_auto && det_ok) ? rd_det : rd_mode;
+
+    wire [15:0] sd_dout_sel = (rd_sel == RD_EARLY) ? sd_dout_d1 : sd_dout;
 
     assign ioctl_wait = sd_busy || (ioctl_wr && in_sdram);
 
     // A hit needs no SDRAM cycle, so it can be served while another client's read is
     // in flight. rd_q/ack_r are shared: one ack per cycle, and a completion wins.
     wire sd_complete = sd_busy && sd_ready && !sd_rd && !sd_wr;
-    wire comp_ack    = (sd_complete && sd_was_rd && (rd_mode != RD_LATE)) || rd_pend;
-    wire serve_hit   = c_hit && !comp_ack && !ack_r[pick] && !ioctl_download;
+    wire comp_ack    = (sd_complete && sd_was_rd && (rd_sel < RD_LATE)) || rd_pend;
+    wire serve_hit   = c_hit && !comp_ack && !ack_r[pick] && !ioctl_download && !probing;
 
     always_ff @(posedge clk) begin
         // por_reset ONLY: a reset including ioctl_download would idle this FSM for
@@ -328,12 +386,27 @@ module upl_rom
             sd_rd <= 0; sd_wr <= 0; sd_refresh <= 0; sd_busy <= 0; sd_was_rd <= 0;
             sd_refresh_cnt <= 9'd0; sd_old_ready <= 1'b1; wr_pend <= 1'b0; ack_r <= 6'd0;
             rd_pend <= 1'b0;
+            probing <= 1'b0; sd_probe <= 1'b0; prb_dly <= 2'd0; det_ok <= 1'b0;
+            rd_cnt <= 2'd0; dl_d <= 1'b0;
             rr <= 3'd0;
             for (ci = 0; ci < 6; ci = ci + 1) begin
                 c_vld[ci] <= 2'd0;
                 c_lru[ci] <= 1'b0;
             end
         end else begin
+            // Probe once the download's last write has drained. Re-running on every
+            // download pulse just re-confirms the same answer.
+            dl_d <= ioctl_download;
+            if (dl_d && !ioctl_download && ref_vld && !wr_pend && !sd_busy) begin
+                probing <= 1'b1; prb_ph <= 2'd0; prb_ok <= 4'hF; prb_to <= 16'd0;
+            end
+            if (probing) begin
+                prb_to <= prb_to + 16'd1;
+                if (&prb_to) begin      // never leave the clients blocked
+                    probing <= 1'b0; sd_probe <= 1'b0; prb_dly <= 2'd0; det_ok <= 1'b0;
+                end
+            end
+
             // AUTO_REFRESH: 8192 rows / 64 ms = 7.8125 us = 468 cycles at 60 MHz.
             // Toggled unconditionally and OUTSIDE the arbiter so a busy client cannot
             // starve it; the controller edge-detects it and services it from IDLE.
@@ -364,8 +437,12 @@ module upl_rom
                 // complete: ready back high with the strobe already cleared
                 if (sd_ready && !sd_rd && !sd_wr) begin
                     if (sd_was_rd) begin
-                        if (rd_mode == RD_LATE) begin
+                        if (sd_probe) begin
+                            prb_e <= sd_dout_d1; prb_n <= sd_dout;
+                            prb_dly <= 2'd2; sd_probe <= 1'b0;
+                        end else if (rd_sel >= RD_LATE) begin
                             rd_pend <= 1'b1; rd_cur <= cur; rd_lsbp <= sd_lsb;
+                            rd_cnt  <= (rd_sel == RD_LATER) ? 2'd2 : 2'd1;
                         end else begin
                             rd_q       <= sd_lsb ? sd_dout_sel[15:8] : sd_dout_sel[7:0];
                             ack_r[cur] <= 1'b1;
@@ -388,7 +465,11 @@ module upl_rom
                     wr_pend  <= (ioctl_wr && in_sdram);
                 // !ack_r[pick] && !c_hit: never fetch for a client whose ack is already
                 // up or is being served from cache, or its next read is one fetch stale.
-                end else if (pick_v && !ioctl_download && !rd_pend && !ack_r[pick] && !c_hit) begin
+                end else if (probing && (prb_dly == 2'd0)) begin
+                    sd_addr   <= {3'd0, ref_wa + {21'd0, prb_ph}};
+                    prb_wd    <= ref_w[prb_ph];
+                    sd_rd     <= 1; sd_busy <= 1; sd_was_rd <= 1; sd_probe <= 1;
+                end else if (pick_v && !ioctl_download && !probing && !rd_pend && !ack_r[pick] && !c_hit) begin
                     sd_addr   <= {3'd0, cli_byte[23:1]};
                     sd_lsb    <= cli_byte[0];
                     cur       <= pick;
@@ -398,7 +479,8 @@ module upl_rom
             end
 
             // RD_LATE capture, one cycle after completion
-            if (rd_pend) begin
+            if (rd_pend && (rd_cnt > 2'd1)) rd_cnt <= rd_cnt - 2'd1;
+            else if (rd_pend) begin
                 rd_q          <= rd_lsbp ? sd_dout[15:8] : sd_dout[7:0];
                 ack_r[rd_cur] <= 1'b1;
                 rd_pend       <= 1'b0;
@@ -406,6 +488,24 @@ module upl_rom
                 c_dat[rd_cur][c_lru[rd_cur]] <= sd_dout;
                 c_vld[rd_cur][c_lru[rd_cur]] <= 1'b1;
                 c_lru[rd_cur]                <= ~c_lru[rd_cur];
+            end
+
+            // Late sample lands here, one cycle after completion, so all three
+            // candidate sample points are now in hand for this phase.
+            if (prb_dly == 2'd2) begin
+                prb_l   <= sd_dout;          // completion +1
+                prb_dly <= 2'd1;
+            end else if (prb_dly == 2'd1) begin
+                prb_ok  <= prb_ok_nxt;       // sd_dout is now completion +2
+                prb_dly <= 2'd0;
+                if (prb_ph == 2'd3) begin
+                    probing <= 1'b0;
+                    if      (prb_ok_nxt[1]) begin rd_det <= RD_NORMAL; det_ok <= 1'b1; end
+                    else if (prb_ok_nxt[0]) begin rd_det <= RD_EARLY;  det_ok <= 1'b1; end
+                    else if (prb_ok_nxt[2]) begin rd_det <= RD_LATE;   det_ok <= 1'b1; end
+                    else if (prb_ok_nxt[3]) begin rd_det <= RD_LATER;  det_ok <= 1'b1; end
+                    else                          det_ok <= 1'b0;
+                end else prb_ph <= prb_ph + 2'd1;
             end
 
             // Cache hit: ack immediately and rotate the pointer as a real service
