@@ -12,10 +12,7 @@ module upl_rom
     input                clk,             // 60 MHz fabric; also clocks the SDRAM controller
     input                por_reset,       // power-on ONLY. Must never include ioctl_download.
 
-    // DIAG-REVERT-2026-08-30: SDRAM read latch position. Original was a 1-bit rd_late
-    // (0 = capture on the completion cycle, 1 = one cycle later):
-    //     input                rd_late,
-    // sdram.sv programs BURST_LENGTH=4 sequential with auto-precharge, so every read
+    // SDRAM read latch position. sdram.sv programs BURST_LENGTH=4 sequential with auto-precharge, so every read
     // returns four words wrapping inside the aligned 4-word block. Capturing on the
     // completion cycle lands on burst word 1, not word 0, which reads back as the low
     // two bits of the word address incremented mod 4. Verified against HW: the fg char
@@ -341,7 +338,7 @@ module upl_rom
     reg  [23:0] wr_addr;
     reg   [7:0] wr_data;
 
-    // DIAG-REVERT-2026-08-30: deferred read capture for rd_late. cur/sd_lsb are
+    // Deferred read capture for RD_LATE. cur/sd_lsb are
     // snapshotted because the arbiter may start another read on the next cycle.
     reg         rd_pend = 1'b0;
     reg   [2:0] rd_cur  = 3'd0;
@@ -439,9 +436,10 @@ module upl_rom
                     // would win (last assignment) and silently drop that byte.
                     // ioctl_wait is low on this cycle, so it does happen.
                     wr_pend  <= (ioctl_wr && in_sdram);
-                // DIAG-REVERT-2026-08-30: original below, uncomment to restore
-                // end else if (pick_v && !ioctl_download && !rd_pend) begin
-                end else if (pick_v && !ioctl_download && !rd_pend && !ack_r[pick] && !c_hit) begin  // DIAG: one-fetch-stale fix
+                // !ack_r[pick] && !c_hit: never start a fetch for a client whose ack is
+                // already up or is being served from the cache this cycle, or its next
+                // read completes against the previous word (one-fetch-stale).
+                end else if (pick_v && !ioctl_download && !rd_pend && !ack_r[pick] && !c_hit) begin
                     sd_addr   <= {3'd0, cli_byte[23:1]};
                     sd_lsb    <= cli_byte[0];
                     cur       <= pick;
@@ -450,7 +448,7 @@ module upl_rom
                 end
             end
 
-            // DIAG-REVERT-2026-08-30: rd_late capture, one cycle after completion
+            // RD_LATE capture, one cycle after completion
             if (rd_pend) begin
                 rd_q          <= rd_lsbp ? sd_dout[15:8] : sd_dout[7:0];
                 ack_r[rd_cur] <= 1'b1;

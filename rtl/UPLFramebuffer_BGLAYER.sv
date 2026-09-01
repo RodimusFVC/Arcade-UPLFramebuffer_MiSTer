@@ -37,8 +37,6 @@ module UPLFramebuffer_BGLAYER #(
     input        [15:0] scrollx,
     input        [15:0] scrolly,
 
-    input         [1:0] DIAG_BGMODE,     // DIAG-REVERT-2026-08-30
-
     output       [12:0] vram_addr,
     input         [7:0] vram_data,
 
@@ -124,9 +122,8 @@ module UPLFramebuffer_BGLAYER #(
     // index using all of hi[7:4], and tileinfo.set() passes flip 0 -- those sets have NO
     // bg flip at all. mnight/arkarea reuse hi bit4 as tile bit 10 (so no flipx either);
     // ninjakd2 keeps a 10-bit index with flipx on bit4.
-    wire [11:0] bg_tile  = (DIAG_BGMODE == 2'd2) ? bfetch_tidx
-                         : gfx_robokid           ? {bhi[4], bhi[5], bhi[7:6], blo}
-                                                 : {1'b0, bg_mnight & bhi[4], bhi[7:6], blo};
+    wire [11:0] bg_tile  = gfx_robokid ? {bhi[4], bhi[5], bhi[7:6], blo}
+                                      : {1'b0, bg_mnight & bhi[4], bhi[7:6], blo};
     wire        bg_flipy = gfx_robokid ? 1'b0 : bhi[5];
     wire  [3:0] bg_ty    = bg_flipy ? ~bfetch_my : bfetch_my;
 
@@ -194,6 +191,6 @@ module UPLFramebuffer_BGLAYER #(
     wire [5:0] bshift = {2'd0, ~bg_tx} << 2;         // nibble 15 is the leftmost pixel
 
     assign color = bg_use_nxt ? bg_nxt_color : bg_cur_color;
-    assign pix   = (DIAG_BGMODE == 2'd3) ? 4'd1 : ((bg_sel_bits >> bshift) & 64'hF);
+    assign pix   = (bg_sel_bits >> bshift) & 64'hF;
 
 endmodule

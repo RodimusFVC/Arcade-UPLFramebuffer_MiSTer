@@ -45,11 +45,7 @@ module UPLFramebuffer
     input                crt_flip,
     input                pause,
 
-    // DIAG-REVERT-2026-08-30
     input          [1:0] rd_mode,        // SDRAM read latch: 0=Early 1=Normal 2=Late
-    input                diag_tileview,
-    input          [1:0] diag_bgmode,    // 0 Off 1 Swatch 2 TileROM 3 VRAMCol
-    input                diag_sproff,    // 1 = drop the sprite layer out of the mix
 
     // ---- SDRAM
     inout  [15:0] SDRAM_DQ,
@@ -103,7 +99,7 @@ upl_rom rom
 (
     .clk(clk_60m),
     .por_reset(por_reset),
-    .rd_mode(rd_mode),          // DIAG-REVERT-2026-08-30
+    .rd_mode(rd_mode),
 
     .ioctl_download(ioctl_download),
     .ioctl_index(ioctl_index),
@@ -202,9 +198,6 @@ UPLFramebuffer_VIDEO video
     .bg_mnight(bg_mnight),
     .gfx_robokid(gfx_robokid),
     .is_omegaf(is_omegaf),
-    .DIAG_TILEVIEW(diag_tileview),   // DIAG-REVERT-2026-08-30
-    .DIAG_BGMODE(diag_bgmode),       // DIAG-REVERT-2026-08-30
-    .DIAG_SPROFF(diag_sproff),       // DIAG-REVERT-2026-08-30
 
     .fg_vram_addr(fg_vram_addr), .fg_vram_data(fg_vram_data),
     .bg0_vram_addr(bg0_vram_addr), .bg0_vram_data(bg0_vram_data),
@@ -223,8 +216,7 @@ UPLFramebuffer_VIDEO video
 
     .HSync(video_hsync), .VSync(video_vsync),
     .HBlank(video_hblank), .VBlank(video_vblank),
-    .R(video_r), .G(video_g), .B(video_b),
-    .DIAG_bst(), .DIAG_btidx(), .DIAG_bty(), .DIAG_bstart()   // DIAG-REVERT-2026-08-30
+    .R(video_r), .G(video_g), .B(video_b)
 );
 
 //------------------------------------------------------- Sprites -------------------------------------------------------------//

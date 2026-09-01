@@ -86,11 +86,7 @@ localparam CONF_STR = {
 	"P3,High Score Options;",
 	"P3OR,Autosave Hiscores,Off,On;",
 	"-;",
-	"-;",
 	"OJK,SDRAM Rd Latch,Early,Normal,Late;",
-	"OO,Tile ROM Viewer,Off,On;",
-	"OST,BG Debug,Off,Swatch,TileROM,VRAMCol;",
-	"OU,Sprite Layer,On,Off;",
 	"-;",
 	"DIP;",
 	"-;",
@@ -370,10 +366,7 @@ UPLFramebuffer uplframebuffer_inst
 
 	.pause(pause_cpu),
 
-	.rd_mode(status[20:19]),       // DIAG-REVERT-2026-08-30: 0=Early is the fix
-	.diag_tileview(status[24]),    // DIAG-REVERT-2026-08-30
-	.diag_bgmode(status[29:28]),   // DIAG-REVERT-2026-08-30
-	.diag_sproff(status[30]),      // DIAG-REVERT-2026-08-30
+	.rd_mode(status[20:19]),       // SDRAM read latch, 0 = Early
 
 	.SDRAM_DQ(SDRAM_DQ), .SDRAM_A(SDRAM_A), .SDRAM_DQML(SDRAM_DQML), .SDRAM_DQMH(SDRAM_DQMH),
 	.SDRAM_BA(SDRAM_BA), .SDRAM_nCS(SDRAM_nCS), .SDRAM_nWE(SDRAM_nWE), .SDRAM_nRAS(SDRAM_nRAS),

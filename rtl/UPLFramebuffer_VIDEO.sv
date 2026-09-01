@@ -19,23 +19,6 @@ module UPLFramebuffer_VIDEO
     input               gfx_robokid,      // robokid/omegaf palette bases, gfx col order, 5-bit RGB
     input               is_omegaf,        // bg map is 128x32 tiles, not 32x32
 
-    // DIAG-REVERT-2026-08-30: 1 = ignore fg_videoram and the palette, draw char
-    // tiles 0.. in order as greyscale. The screen becomes the gfx ROM itself.
-    input               DIAG_TILEVIEW,
-
-    // DIAG-REVERT-2026-08-30: background bisection.
-    //   0 Off      normal
-    //   1 Swatch   bg colour/pen straight from screen position, VRAM and ROM and
-    //              bg_enable all bypassed -> tests only mixing + palette
-    //   2 TileROM  tile index from screen position, bg_videoram bypassed
-    //              -> tests the tiles1 SDRAM fetch path
-    //   3 VRAMCol  normal fetch but pen forced to 1, so what shows is the colour
-    //              nibble the CPU wrote into bg_videoram
-    input         [1:0] DIAG_BGMODE,
-    // DIAG-REVERT-2026-08-30: 1 = drop the sprite framebuffer out of the mix,
-    // so an unexpected sprite layer can be told apart from a bg/fg fault.
-    input               DIAG_SPROFF,
-
     // ---- fg tilemap RAM (in MAIN)
     output       [10:0] fg_vram_addr,
     input         [7:0] fg_vram_data,
@@ -75,14 +58,7 @@ module UPLFramebuffer_VIDEO
     output              VBlank,
     output        [7:0] R,
     output        [7:0] G,
-    output        [7:0] B,
-
-    // DIAG-REVERT-2026-08-30: bg fetch visibility for the Verilator harness only.
-    // Leave unconnected in synthesis; costs nothing.
-    output        [3:0] DIAG_bst,
-    output        [9:0] DIAG_btidx,
-    output        [3:0] DIAG_bty,
-    output              DIAG_bstart
+    output        [7:0] B
 );
 
     ////////////////////////////////////////////////////////////////////////
@@ -151,7 +127,6 @@ module UPLFramebuffer_VIDEO
     wire [7:0] fx = flip_screen ? (8'd255 - h_next[7:0])  : h_next[7:0];
     wire [7:0] fy = flip_screen ? (8'd255 - v_fetch[7:0]) : v_fetch[7:0];
 
-    reg  [9:0] tile_lat = 10'd0;   // DIAG-REVERT-2026-08-30
     reg  [3:0] st = 4'd0;
     reg  [7:0] tlo = 8'd0, thi = 8'd0;
     reg [31:0] rowbits_n = 32'd0;   // next group's 8 pixels, 4bpp packed MSB
@@ -162,14 +137,8 @@ module UPLFramebuffer_VIDEO
     reg        flipx   = 1'b0;
 
     wire [9:0] tile_index = {fy[7:3], fx[7:3]};
-    // DIAG-REVERT-2026-08-30: original below, restore when removing the viewer
-    // wire [9:0] tile_num = {thi[7:6], tlo};
-    wire [9:0] tile_num   = DIAG_TILEVIEW ? tile_lat : {thi[7:6], tlo};
-    // DIAG-REVERT-2026-08-30: original -> wire fy_flip = thi[5];
-    // The viewer MUST force both flips off: they come from fg_videoram, so
-    // garbage tilemap data flips tiles at random and garbles the viewer even
-    // when the ROM path is correct.
-    wire       fy_flip    = DIAG_TILEVIEW ? 1'b0 : thi[5];
+    wire [9:0] tile_num   = {thi[7:6], tlo};
+    wire       fy_flip    = thi[5];
     wire [2:0] trow       = fy_flip ? ~fy[2:0] : fy[2:0];
 
     reg [10:0] fg_addr_r;
@@ -192,18 +161,14 @@ module UPLFramebuffer_VIDEO
                 st      <= 4'd0;
             end else begin
                 case (st)
-                    // DIAG-REVERT-2026-08-30: -4 tile rows so tile 0 lands on the first
-                    // VISIBLE line (the window starts at bitmap row 32 = tile row 4)
-                    4'd0: begin fg_addr_r <= {tile_index, 1'b0};
-                                tile_lat <= {fy[7:3] - 5'd4, fx[7:3]}; st <= 4'd1; end
+                    4'd0: begin fg_addr_r <= {tile_index, 1'b0}; st <= 4'd1; end
                     4'd1: st <= 4'd2;                                  // BRAM latency
                     4'd2: begin tlo <= fg_vram_data; fg_addr_r <= {tile_index, 1'b1}; st <= 4'd3; end
                     4'd3: st <= 4'd4;
                     4'd4: begin
                         thi     <= fg_vram_data;
                         color_n <= fg_vram_data[3:0];
-                        // DIAG-REVERT-2026-08-30: original -> flipx_n <= fg_vram_data[4];
-                        flipx_n <= DIAG_TILEVIEW ? 1'b0 : fg_vram_data[4];
+                        flipx_n <= fg_vram_data[4];
                         st      <= 4'd5;
                     end
                     4'd5: begin char_addr_r <= {tile_num, trow, 2'd0}; char_req_r <= 1'b1; st <= 4'd6; end
@@ -232,11 +197,10 @@ module UPLFramebuffer_VIDEO
     UPLFramebuffer_BGLAYER #(.H_TOTAL(H_TOTAL), .V_TOTAL(V_TOTAL)) bg_layer0
     (
         .clk(clk), .cen_pix(cen_pix), .reset(reset), .fetch_en(fetch_en),
-        .en(bg_layer_en[0] | (DIAG_BGMODE == 2'd1)),
+        .en(bg_layer_en[0]),
         .h_cnt(h_cnt), .v_cnt(v_cnt), .flip_screen(flip_screen),
         .gfx_robokid(gfx_robokid), .is_omegaf(is_omegaf), .bg_mnight(bg_mnight),
         .scrollx(bg0_scrollx), .scrolly(bg0_scrolly),
-        .DIAG_BGMODE(DIAG_BGMODE),
         .vram_addr(bg0_vram_addr), .vram_data(bg0_vram_data),
         .rom_addr(tile1_addr), .rom_req(tile1_req), .rom_ack(tile1_ack), .rom_data(tile1_data),
         .color(bg0_color), .pix(bg0_pix)
@@ -248,7 +212,6 @@ module UPLFramebuffer_VIDEO
         .h_cnt(h_cnt), .v_cnt(v_cnt), .flip_screen(flip_screen),
         .gfx_robokid(gfx_robokid), .is_omegaf(is_omegaf), .bg_mnight(bg_mnight),
         .scrollx(bg1_scrollx), .scrolly(bg1_scrolly),
-        .DIAG_BGMODE(2'd0),
         .vram_addr(bg1_vram_addr), .vram_data(bg1_vram_data),
         .rom_addr(tile2_addr), .rom_req(tile2_req), .rom_ack(tile2_ack), .rom_data(tile2_data),
         .color(bg1_color), .pix(bg1_pix)
@@ -260,32 +223,20 @@ module UPLFramebuffer_VIDEO
         .h_cnt(h_cnt), .v_cnt(v_cnt), .flip_screen(flip_screen),
         .gfx_robokid(gfx_robokid), .is_omegaf(is_omegaf), .bg_mnight(bg_mnight),
         .scrollx(bg2_scrollx), .scrolly(bg2_scrolly),
-        .DIAG_BGMODE(2'd0),
         .vram_addr(bg2_vram_addr), .vram_data(bg2_vram_data),
         .rom_addr(tile3_addr), .rom_req(tile3_req), .rom_ack(tile3_ack), .rom_data(tile3_data),
         .color(bg2_color), .pix(bg2_pix)
     );
 
-    // DIAG-REVERT-2026-08-30: these taps were layer-0 internals and now live inside
-    // UPLFramebuffer_BGLAYER. The top level leaves them unconnected.
-    assign DIAG_bst    = 4'd0;
-    assign DIAG_btidx  = 10'd0;
-    assign DIAG_bty    = 4'd0;
-    assign DIAG_bstart = 1'b0;
-
     // Transparency: pen 0xf, EXCEPT robokid's bg0 and ninjakd2/mnight's single layer,
     // which stay opaque -- VIDEO_START_robokid sets the transparent pen on tilemaps 1
     // and 2 only, while VIDEO_START_omegaf sets it on all three.
-    // DIAG_BGMODE 1 (swatch) deliberately ignores the enable, so black in mode 1 means
-    // the mixing or palette is at fault rather than the layer simply being off.
-    wire bg0_op = (DIAG_BGMODE == 2'd1) ? 1'b1
-                : bg_layer_en[0] && (is_omegaf ? (bg0_pix != 4'hF) : 1'b1);
+    wire bg0_op = bg_layer_en[0] && (is_omegaf ? (bg0_pix != 4'hF) : 1'b1);
     wire bg1_op = bg_layer_en[1] && (bg1_pix != 4'hF);
     wire bg2_op = bg_layer_en[2] && (bg2_pix != 4'hF);
 
     // All three bg layers share palette base 0x000 (GFXDECODE entries 2/3/4).
-    wire [9:0] bg0_index = (DIAG_BGMODE == 2'd1) ? {2'b00, v_cnt[7:4], h_cnt[7:4]}
-                                                 : {2'b00, bg0_color, bg0_pix};
+    wire [9:0] bg0_index = {2'b00, bg0_color, bg0_pix};
     wire [9:0] bg1_index = {2'b00, bg1_color, bg1_pix};
     wire [9:0] bg2_index = {2'b00, bg2_color, bg2_pix};
 
@@ -294,7 +245,9 @@ module UPLFramebuffer_VIDEO
     // (see Common-Pitfalls: pixel pipeline needs matched sync delay).
     ////////////////////////////////////////////////////////////////////////
 
-    wire [2:0] px    = flipx ? ~h_cnt[2:0] : h_cnt[2:0];
+    // Screen flip mirrors inside the tile too, so it XORs with the tile's own flipx
+    // (255-h == ~h in 8 bits; UPLFramebuffer_BGLAYER does the same via dsx).
+    wire [2:0] px    = (flipx ^ flip_screen) ? ~h_cnt[2:0] : h_cnt[2:0];
     wire [4:0] shift = {2'd0, ~px} << 2;          // nibble 7 is the leftmost pixel
     wire [3:0] pix   = (rowbits >> shift) & 32'hF;
 
@@ -303,17 +256,7 @@ module UPLFramebuffer_VIDEO
     // fg with pen 0 transparent. Palette bases: bg 0x000, sprites 0x100, fg 0x200.
     // fb_rdata is {colour, pen} and the engine never writes pen 0xf, so that value
     // is an unambiguous empty marker.
-    // DIAG-REVERT-2026-08-30: original -> wire spr_opaque = (fb_rdata[3:0] != 4'hF);
-    wire spr_opaque = (fb_rdata[3:0] != 4'hF) && !DIAG_SPROFF;
-
-    // DIAG-REVERT-2026-08-30: original below, restore when removing the bisection
-    // assign pal_index = (|pix)     ? {2'b10, color, pix}
-    //                  : spr_opaque ? {2'b01, fb_rdata}
-    //                  : bg_enable  ? {2'b00, bg_color, bg_pix}
-    //                               : 10'd0;
-    // Swatch deliberately ignores bg_enable, so a black screen in mode 1 means the
-    // mixing or palette is at fault, while black in 2/3 with 1 working means
-    // bg_enable is low.
+    wire spr_opaque = (fb_rdata[3:0] != 4'hF);
 
     // The fg tilemap's transparent pen is 0xF, not 0 (ninjakd2.cpp:449
     // set_transparent_pen(0xf)). Testing pen 0 instead inverts it: empty areas, which
@@ -347,19 +290,10 @@ module UPLFramebuffer_VIDEO
     // with colour(N) gated by opacity(N-2): solid areas survive, thin strokes
     // shred and edges fringe.
     reg [15:0] rgb_lat = 16'd0;
-    reg        opq_lat = 1'b0;
     reg        hs_lat  = 1'b0, vs_lat = 1'b0, hb_lat = 1'b1, vb_lat = 1'b1;
 
-    // DIAG-REVERT-2026-08-30: in viewer mode the pixel value itself becomes the
-    // greyscale level, bypassing palette RAM completely.
-    wire [15:0] pal_or_grey = DIAG_TILEVIEW ? {pix, pix, pix, 4'd0} : pal_rgb;
-
-    // Only the tile-ROM viewer keys on fg opacity; in normal operation every pixel
-    // has a colour, from the fg, the bg, or pen 0 when the bg is disabled.
     always_ff @(posedge clk) if (cen_pix) begin
-        // DIAG-REVERT-2026-08-30: original -> rgb_lat <= pal_rgb;
-        rgb_lat <= pal_or_grey;
-        opq_lat <= DIAG_TILEVIEW ? (|pix) : 1'b1;
+        rgb_lat <= pal_rgb;
         hs_lat  <= hsync_raw;
         vs_lat  <= vsync_raw;
         hb_lat  <= hblank_raw;
@@ -371,7 +305,7 @@ module UPLFramebuffer_VIDEO
     assign HBlank = hb_lat;
     assign VBlank = vb_lat;
 
-    wire visible = opq_lat & ~hb_lat & ~vb_lat;
+    wire visible = ~hb_lat & ~vb_lat;
 
     // robokid: RRRRGGGGBBBBRGBx (5 bits/channel, LSBs in the low nibble).
     // everything else: RGBx_444.
